@@ -7,13 +7,6 @@ The project follows a complete **Design Thinking process**, moving from empathy 
 
 CampusCare helps students maintain continuous visibility of their academic standing, reducing last-minute stress caused by unclear attendance and performance tracking.
 
----
-
-## 🚀 Live Demo
-
-💻 GitHub: [parteek1907/CampusCare](https://github.com/parteek1907/CampusCare)
-
----
 
 ## 📌 Problem Statement
 
@@ -130,17 +123,6 @@ Create a `.env.local` file in the root directory:
 VITE_AUTH0_DOMAIN=your-auth0-domain
 VITE_AUTH0_CLIENT_ID=your-client-id
 ```
-
----
-
-## 📊 Screenshots
-
-*(Add screenshots here)*
-
-* Landing Page
-* Dashboard
-* Attendance Tracking
-* Analytics View
 
 ---
 
