@@ -21,7 +21,7 @@ export function renderSubjects(container: HTMLElement) {
         </header>
 
         <!-- Subject Grid -->
-        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:1.5rem;">
+        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:16px; align-items:stretch;">
             ${subs.length === 0 ?
             `<div style="grid-column:1/-1; text-align:center; padding:4rem; border:2px dashed #e2e8f0; border-radius:16px; color:#94a3b8;">
                     No subjects added yet. Click "Add Subject" to begin.
@@ -34,7 +34,7 @@ export function renderSubjects(container: HTMLElement) {
 
         <!-- Modal Overlay -->
         <div id="sub-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:100; backdrop-filter:blur(4px); place-items:center;">
-            <div class="card" style="width:90%; max-width:600px; padding:2rem; max-height:90vh; overflow-y:auto; animation:fadeUp 0.3s ease-out;">
+            <div class="card" style="width:90%; max-width:600px; padding:20px; max-height:90vh; overflow-y:auto; animation:fadeUp 0.3s ease-out;">
                 <div class="flex-between" style="margin-bottom:1.5rem;">
                     <h2 id="modal-title" style="font-size:1.5rem;">Add Subject</h2>
                     <button id="close-modal" style="background:none; border:none; font-size:1.5rem; cursor:pointer;">&times;</button>
@@ -52,9 +52,9 @@ export function renderSubjects(container: HTMLElement) {
                         </div>
                     </div>
 
-                    <div style="background:#f8fafc; padding:1rem; border-radius:12px; margin-bottom:1rem;">
+                    <div style="background:#f8fafc; padding:20px; border-radius:12px; margin-bottom:1rem;">
                         <label style="display:block; font-weight:600; margin-bottom:0.75rem; font-size:0.9rem;">Weekly Schedule</label>
-                        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem;">
+                        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px;">
                             <div class="input-group">
                                 <label style="font-size:0.8rem;">Theory (1hr)</label>
                                 <input type="number" id="f-theory" min="0" value="0">
@@ -70,7 +70,7 @@ export function renderSubjects(container: HTMLElement) {
                         </div>
                     </div>
 
-                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem; margin-bottom:1rem;">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px; margin-bottom:1rem;">
                         <div class="input-group">
                             <label>Evaluation Type</label>
                             <select id="f-eval">
@@ -92,9 +92,9 @@ export function renderSubjects(container: HTMLElement) {
                         </div>
                     </div>
 
-                    <div id="marks-split" style="background:#eff6ff; padding:1rem; border-radius:12px; margin-bottom:1.5rem; display:none;">
+                    <div id="marks-split" style="background:#eff6ff; padding:20px; border-radius:12px; margin-bottom:1.5rem; display:none;">
                          <label style="display:block; font-weight:600; margin-bottom:0.75rem; font-size:0.9rem; color:#1e40af;">Marks Distribution</label>
-                         <div style="display:flex; align-items:center; gap:1rem;">
+                         <div style="display:flex; align-items:center; gap:16px;">
                             <div class="input-group" style="flex:1">
                                 <label>Internal</label>
                                 <input type="number" id="f-internal" value="50">
@@ -107,7 +107,7 @@ export function renderSubjects(container: HTMLElement) {
                          </div>
                     </div>
 
-                    <div id="internal-only-box" style="background:#f0fdf4; padding:1rem; border-radius:12px; margin-bottom:1.5rem; display:none;">
+                    <div id="internal-only-box" style="background:#f0fdf4; padding:20px; border-radius:12px; margin-bottom:1.5rem; display:none;">
                         <div class="input-group">
                             <label style="color:#15803d; font-weight:600;">Total Internal Marks</label>
                             <input type="number" id="f-internal-only" value="50">
@@ -128,7 +128,7 @@ export function renderSubjects(container: HTMLElement) {
 
 function renderSubjectCard(s: Subject) {
     return `
-        <div class="card subject-card" data-id="${s.id}" style="cursor:pointer; transition:all 0.2s; border:1px solid #e2e8f0; position:relative;">
+        <div class="card subject-card" data-id="${s.id}" style="cursor:pointer; position:relative;">
             <div class="flex-between" style="margin-bottom:1rem;">
                 <h3 style="font-size:1.1rem; font-weight:700;">
                     ${s.name}

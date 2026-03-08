@@ -2,7 +2,7 @@ import { store } from '../store';
 import { $ } from '../utils';
 import { Modal } from '../ui/modal';
 import { AbsenceModal } from '../ui/absence-modal';
-import { calculateSubjectAttendance } from './stats';
+import { getHours, getSubjectMetrics } from './stats';
 
 
 
@@ -36,7 +36,10 @@ export function renderAttendance(container: HTMLElement) {
     let simulatedAttendance: any = null;
     let simulatedHolidays: string[] = [];
 
-    // --- Main Layout (Preserved) ---
+    // 1. Target Attendance Logic
+    const targetPercentage = data.semesterConfig.minAttendance;
+    console.log('[What-If] Target attendance loaded:', targetPercentage);
+
     // --- Main Layout ---
     container.innerHTML = `
         <!-- Prominent What-If Simulation Panel (Hidden by default) -->
@@ -50,6 +53,9 @@ export function renderAttendance(container: HTMLElement) {
                     </div>
                     <div style="color: #c7d2fe; font-size: 0.95rem;">
                         Experiment with future attendance. <strong style="color:white;">Changes are NOT saved.</strong>
+                    </div>
+                    <div style="color: rgba(255,255,255,0.7); font-size: 0.85rem; margin-top: 4px;">
+                        Simulating against your target: ${targetPercentage}%
                     </div>
                 </div>
             </div>
@@ -73,26 +79,204 @@ export function renderAttendance(container: HTMLElement) {
                     </button>
                 </div>
             </div>
+            
+            ${(() => {
+            const attData = isWhatIfMode ? simulatedAttendance : (data.attendance || {});
+            const todayStr = toDateStr(new Date());
+
+            // Parse and sort all recorded dates
+            const allDates = Object.keys(attData).sort((a, b) => a.localeCompare(b));
+            if (allDates.length === 0) {
+                return `
+                        <div style="display:flex; gap:12px; margin-top:1rem;">
+                            <div style="background:#f3f4f6; border:1px solid #e5e7eb; color:#4b5563; border-radius:20px; padding:6px 14px; font-size:0.875rem; font-weight:600;">
+                                🔥 No active streak — mark today's attendance!
+                            </div>
+                        </div>
+                    `;
+            }
+
+            // 1. Calculate Current Streak (Backwards from today)
+            let currentStreak = 0;
+            let checkDate = new Date();
+
+            const checkHasPresent = (dStr: string) => {
+                const dayName = new Date(dStr).toLocaleDateString('en-US', { weekday: 'long' });
+                const schedule = data.timetable || {};
+                const slots = schedule[dayName] || [];
+                const exClasses = Array.isArray(data.extraClasses) ? data.extraClasses : [];
+                const extraClassesToday = exClasses.filter((e: any) => e.date === dStr);
+
+                const dayRecord = attData[dStr] || {};
+
+                const hasRegularPresent = slots.some((slot: any) => {
+                    const slotId = slot.id || `slot_${slot.subjectId}_${slot.startTime.replace(':', '')}`;
+                    const status = dayRecord[slotId];
+                    return status === 'present' || status === 'present_half';
+                });
+
+                const hasExtraPresent = extraClassesToday.some((exc: any) => {
+                    const status = exc.status || dayRecord[exc.subjectId];
+                    return status === 'present' || status === 'present_half';
+                });
+
+                const hasClasses = slots.length > 0 || extraClassesToday.length > 0;
+
+                return { hasPresent: hasRegularPresent || hasExtraPresent, hasClasses };
+            };
+
+            const activeHols = data.holidays || [];
+
+            // Go backwards starting from today
+            while (toDateStr(checkDate) >= data.semesterConfig.startDate) {
+                const ds = toDateStr(checkDate);
+
+                if (!activeHols.includes(ds)) {
+                    const { hasPresent, hasClasses } = checkHasPresent(ds);
+
+                    if (hasClasses) {
+                        if (hasPresent) {
+                            currentStreak++;
+                        } else {
+                            // Hit a day where classes exist but NO attendance was marked present -> break streak
+                            break;
+                        }
+                    }
+                }
+
+                // Move back one day
+                checkDate.setDate(checkDate.getDate() - 1);
+            }
+
+            // 2. Calculate Best Streak (Forward sweep)
+            let bestStreak = 0;
+            let tempStreak = 0;
+
+            let ptrDate = new Date(data.semesterConfig.startDate);
+            const endDate = new Date(todayStr < data.semesterConfig.endDate ? todayStr : data.semesterConfig.endDate);
+
+            while (ptrDate <= endDate) {
+                const ds = toDateStr(ptrDate);
+
+                if (!activeHols.includes(ds)) {
+                    const { hasPresent, hasClasses } = checkHasPresent(ds);
+
+                    if (hasClasses) {
+                        if (hasPresent) {
+                            tempStreak++;
+                            if (tempStreak > bestStreak) bestStreak = tempStreak;
+                        } else {
+                            tempStreak = 0; // Reset
+                        }
+                    }
+                }
+
+                ptrDate.setDate(ptrDate.getDate() + 1);
+            }
+
+            // Empty current streak handling
+            if (currentStreak === 0) {
+                return `
+                        <div style="display:flex; gap:10px; margin-top:4px; margin-bottom:12px;">
+                            <div style="background:#f3f4f6; border:1px solid #e5e7eb; color:#4b5563; border-radius:20px; padding:6px 14px; font-size:0.875rem; font-weight:600; height:32px; display:flex; align-items:center;">
+                                🔥 No active streak — mark today's attendance!
+                            </div>
+                            <div style="background:#fff7ed; border:1px solid #fed7aa; color:#ea580c; border-radius:20px; padding:6px 14px; font-size:0.875rem; font-weight:600; height:32px; display:flex; align-items:center;">
+                                ⭐ Best Streak: ${bestStreak} days
+                            </div>
+                        </div>
+                    `;
+            }
+
+            return `
+                    <div style="display:flex; gap:10px; margin-top:4px; margin-bottom:12px;">
+                        <div style="background:#fff7ed; border:1px solid #fed7aa; color:#ea580c; border-radius:20px; padding:6px 14px; font-size:0.875rem; font-weight:600; height:32px; display:flex; align-items:center;">
+                            🔥 Current Streak: ${currentStreak} days
+                        </div>
+                        <div style="background:#fff7ed; border:1px solid #fed7aa; color:#ea580c; border-radius:20px; padding:6px 14px; font-size:0.875rem; font-weight:600; height:32px; display:flex; align-items:center;">
+                            ⭐ Best Streak: ${bestStreak} days
+                        </div>
+                    </div>
+                `;
+        })()}
         </header>
         
         <div style="display:grid; grid-template-columns: 1.6fr 1fr; gap:1.5rem; align-items:start;">
             <!-- Left Column: Calendar -->
             <div style="display:flex; flex-direction:column; gap:1.5rem;">
-                <div class="card" style="padding:0; overflow:hidden;">
-                    <div style="padding:1.5rem; background:#f8fafc; border-bottom:1px solid #e2e8f0;">
-                        <div class="flex-between">
-                            <h3 id="cal-title" style="margin:0; font-size:1.4rem;">Month</h3>
-                            <div style="display:flex; gap:10px;">
-                                <button class="btn btn-secondary btn-small" id="toggle-bulk">Select Multiple</button>
-                                <div style="display:flex; gap:5px;">
-                                    <button class="btn btn-secondary btn-small" id="prev-m">&lt;</button>
-                                    <button class="btn btn-secondary btn-small" id="next-m">&gt;</button>
+                ${Object.keys(data.attendance || {}).length === 0 ? `
+                    <div style="background:#f8fafc; border:1px dashed #cbd5e1; color:#64748b; padding:16px; border-radius:8px; text-align:center; font-weight:500; font-size:0.95rem;">
+                        📅 No attendance marked yet. Click a date to start!
+                    </div>
+                ` : ''}
+                <div class="card" style="overflow:hidden; display:flex; flex-direction:column; gap:16px;">
+                    <div style="padding:0; background:#f8fafc; border-bottom:1px solid #e2e8f0;">
+                        <div class="flex-between" style="display:flex; align-items:center; gap:8px;">
+                            <h3 id="cal-title" style="margin:0; font-size:1.4rem; flex:1;">Month</h3>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <style>
+                                    .cal-toolbar-btn {
+                                        height: 34px;
+                                        border-radius: 8px;
+                                        font-size: 0.875rem;
+                                        display: flex;
+                                        align-items: center;
+                                        justify-content: center;
+                                        cursor: pointer;
+                                    }
+                                    #today-btn {
+                                        border: 1.5px solid #2563eb;
+                                        color: #2563eb;
+                                        background: transparent;
+                                        padding: 0 16px;
+                                        font-weight: 500;
+                                    }
+                                    #today-btn:hover:not(:disabled) {
+                                        background: #eff6ff;
+                                    }
+                                    #toggle-bulk {
+                                        border: 1.5px solid #6b7280;
+                                        color: #374151;
+                                        background: transparent;
+                                        padding: 0 16px;
+                                        font-weight: 500;
+                                        transition: all 0.2s ease;
+                                    }
+                                    #toggle-bulk.active {
+                                        background: #eff6ff;
+                                        border-color: #2563eb;
+                                        color: #2563eb;
+                                    }
+                                    .cal-nav-btn {
+                                        background: white;
+                                        border: 1px solid #e5e7eb;
+                                        width: 34px;
+                                        height: 34px;
+                                        border-radius: 8px;
+                                        display: flex;
+                                        align-items: center;
+                                        justify-content: center;
+                                        cursor: pointer;
+                                        color: #4b5563;
+                                    }
+                                    .cal-nav-btn:hover {
+                                        background: #f9fafb;
+                                    }
+                                </style>
+                                <button id="today-btn" class="cal-toolbar-btn">Today</button>
+                                <button id="toggle-bulk" class="cal-toolbar-btn">Select Multiple</button>
+                                <div style="display:flex; gap:8px;">
+                                    <button class="cal-nav-btn" id="prev-m">&lt;</button>
+                                    <button class="cal-nav-btn" id="next-m">&gt;</button>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <div class="calendar-grid" id="cal-grid" style="padding:1.5rem; min-height:400px;"></div>
+                    <div class="calendar-grid" id="cal-grid" style="min-height:400px;"></div>
                 </div>
+                
+                <!-- Monthly Summary Bar -->
+                <div id="cal-summary-bar" style="background:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:20px; font-size:0.875rem; display:flex; justify-content:space-between; align-items:center; box-shadow: 0 1px 3px rgba(0,0,0,0.06);"></div>
                 
                 <!-- Impact Preview (Always visible in What-If Mode) -->
                 <div id="impact-preview" class="card hidden" style="border:2px solid #6366f1;">
@@ -105,7 +289,7 @@ export function renderAttendance(container: HTMLElement) {
             </div>
 
             <!-- Right Column: Daily Details -->
-            <div class="card" id="daily-panel" style="min-height:500px; padding:1.5rem;">
+            <div class="card" id="daily-panel" style="min-height:500px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; border-bottom:1px solid #e2e8f0; padding-bottom:1rem;">
                     <h3 id="panel-date" style="margin:0; font-size:1.2rem;">Date</h3>
                     <div id="bulk-actions" style="display:none; gap:10px;">
@@ -176,9 +360,55 @@ export function renderAttendance(container: HTMLElement) {
                 </div>
             </div>
         </div>
+        
+        <!-- Bulk actions now in right panel -->
     `;
 
-    // --- Logic ---
+    // --- Toast Logic ---
+    const showToast = (message: string, color: string = '#1e293b') => {
+        let toast = document.getElementById('att-toast');
+
+        // Add animation keyframes if not exists
+        if (!document.getElementById('att-toast-styles')) {
+            const style = document.createElement('style');
+            style.id = 'att-toast-styles';
+            style.innerHTML = `
+                @keyframes slideInRight {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'att-toast';
+            toast.style.position = 'fixed';
+            toast.style.bottom = '24px';
+            toast.style.right = '24px';
+            toast.style.color = 'white';
+            toast.style.padding = '10px 18px';
+            toast.style.borderRadius = '8px';
+            toast.style.fontSize = '0.875rem';
+            toast.style.zIndex = '9999';
+            toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+            toast.style.transition = 'opacity 0.3s ease';
+            document.body.appendChild(toast);
+        }
+
+        toast.style.background = color;
+        toast.textContent = message;
+        toast.style.opacity = '1';
+        toast.style.display = 'block';
+        toast.style.animation = 'slideInRight 0.2s ease forwards';
+
+        if ((toast as any)._timeout) clearTimeout((toast as any)._timeout);
+        (toast as any)._timeout = setTimeout(() => {
+            toast!.style.opacity = '0';
+            setTimeout(() => toast!.style.display = 'none', 300);
+        }, 2500);
+    };
 
     // --- Logic ---
 
@@ -203,6 +433,25 @@ export function renderAttendance(container: HTMLElement) {
     const renderCal = () => {
         const grid = $('#cal-grid');
         grid.innerHTML = '';
+
+        let tooltip = document.getElementById('cal-tooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'cal-tooltip';
+            tooltip.style.position = 'fixed';
+            tooltip.style.zIndex = '9999';
+            tooltip.style.background = '#1e293b';
+            tooltip.style.color = 'white';
+            tooltip.style.borderRadius = '8px';
+            tooltip.style.padding = '10px 14px';
+            tooltip.style.fontSize = '0.8rem';
+            tooltip.style.minWidth = '160px';
+            tooltip.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
+            tooltip.style.pointerEvents = 'none';
+            tooltip.style.display = 'none';
+            document.body.appendChild(tooltip);
+        }
+
         const m = cursorDate.getMonth();
         const y = cursorDate.getFullYear();
         $('#cal-title').textContent = new Date(y, m, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -257,14 +506,207 @@ export function renderAttendance(container: HTMLElement) {
                 }
             }
 
-            // Dots (only if not holiday and valid)
-            if (isValid && !isHoliday && activeAtt?.[dStr]) {
-                const statuses = Object.values(activeAtt[dStr]);
-                if (statuses.includes('absent')) {
-                    const dot = document.createElement('div'); dot.className = 'cal-dot dot-absent'; cell.appendChild(dot);
-                } else if (statuses.length > 0) {
-                    const dot = document.createElement('div'); dot.className = 'cal-dot dot-present'; cell.appendChild(dot);
+            // Highlighting Today
+            if (dStr === toDateStr(new Date())) {
+                cell.style.outline = '2.5px solid #2563eb';
+                cell.style.outlineOffset = '-2px';
+                cell.style.borderRadius = '10px';
+                cell.style.position = 'relative';
+
+                const todayLabel = document.createElement('div');
+                todayLabel.textContent = 'Today';
+                todayLabel.style.fontSize = '0.6rem';
+                todayLabel.style.color = '#2563eb';
+                todayLabel.style.position = 'absolute';
+                todayLabel.style.bottom = '4px';
+                todayLabel.style.left = '50%';
+                todayLabel.style.transform = 'translateX(-50%)';
+                todayLabel.style.fontWeight = 'bold';
+                cell.appendChild(todayLabel);
+            }
+
+            // Dots and Tooltip (for all valid, non-holiday dates)
+            if (isValid && !isHoliday) {
+                // Determine health logic across all scheduled classes
+                const schedule = data.timetable || {};
+                const checkDateObj = new Date(dStr);
+                const dayName = checkDateObj.toLocaleDateString('en-US', { weekday: 'long' });
+
+                const slotsOnDay = schedule[dayName] || [];
+                const exClasses = Array.isArray(data.extraClasses) ? data.extraClasses : [];
+                const extraClassesToday = exClasses.filter((e: any) => e.date === dStr);
+
+                const hasClassesToday = slotsOnDay.length > 0 || extraClassesToday.length > 0;
+
+                if (hasClassesToday) {
+                    let presentCount = 0;
+                    let absentCount = 0;
+                    let cancelledCount = 0;
+                    let unmarkedCount = 0;
+                    let totalClassesCount = 0;
+
+                    const activeAtt = getActiveAttendance();
+
+                    // Count regular slots
+                    slotsOnDay.forEach((slot: any) => {
+                        totalClassesCount++;
+                        const slotId = slot.id || `slot_${slot.subjectId}_${slot.startTime.replace(':', '')}`;
+                        const status = activeAtt?.[dStr]?.[slotId] || null;
+
+                        if (status === 'present' || status === 'present_half' || status === 'excused') presentCount++;
+                        else if (status === 'absent') absentCount++;
+                        else if (status === 'class_cancelled') cancelledCount++;
+                        else unmarkedCount++;
+                    });
+
+                    // Count extra classes
+                    extraClassesToday.forEach((exc: any) => {
+                        totalClassesCount++;
+                        const status = exc.status || activeAtt?.[dStr]?.[exc.subjectId] || null;
+
+                        if (status === 'present' || status === 'present_half' || status === 'excused') presentCount++;
+                        else if (status === 'absent') absentCount++;
+                        else if (status === 'class_cancelled') cancelledCount++;
+                        else unmarkedCount++;
+                    });
+
+                    if (totalClassesCount > 0) {
+                        const dot = document.createElement('div');
+                        dot.style.width = '6px';
+                        dot.style.height = '6px';
+                        dot.style.borderRadius = '50%';
+                        dot.style.margin = '2px auto 0 auto';
+                        dot.style.display = 'block';
+
+                        let dotColor = '';
+                        const allCancelled = cancelledCount === totalClassesCount && totalClassesCount > 0;
+                        const anyAbsent = absentCount > 0;
+                        const somePresent = presentCount > 0;
+                        const allPresent = presentCount === (totalClassesCount - cancelledCount) && presentCount > 0;
+
+                        if (allCancelled) {
+                            dotColor = '#9ca3af'; // gray
+                        } else if (allPresent) {
+                            dotColor = '#16a34a'; // green
+                        } else if (anyAbsent && somePresent) {
+                            dotColor = '#f97316'; // orange
+                        } else if (anyAbsent && !somePresent) {
+                            dotColor = '#dc2626'; // red
+                        } else if (unmarkedCount > 0) {
+                            dotColor = '#3b82f6'; // blue
+                        } else {
+                            dotColor = '#3b82f6'; // fallback
+                        }
+
+                        if (dotColor) {
+                            dot.style.background = dotColor;
+                            cell.appendChild(dot);
+                        }
+                    }
                 }
+
+                // --- Tooltip Logic (works for ALL valid dates) ---
+                cell.addEventListener('mouseenter', () => {
+                    const allSubjects = data.subjects || [];
+                    const schedule = data.timetable || {};
+                    const checkDateObj = new Date(dStr);
+                    const dayName = checkDateObj.toLocaleDateString('en-US', { weekday: 'long' });
+
+                    const slotsOnDay = schedule[dayName] || [];
+                    const exClasses = Array.isArray(data.extraClasses) ? data.extraClasses : [];
+                    const extraClassesToday = exClasses.filter((ev: any) => ev.date === dStr);
+
+                    let tooltipHTML = `<div style="font-weight:600; margin-bottom:6px; border-bottom:1px solid rgba(255,255,255,0.2); padding-bottom:6px;">${checkDateObj.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}</div>`;
+
+                    if (slotsOnDay.length === 0 && extraClassesToday.length === 0) {
+                        tooltipHTML += `<div style="color:#94a3b8; font-style:italic;">No classes scheduled</div>`;
+                    } else {
+                        const activeAtt = getActiveAttendance();
+
+                        // Render regular slots
+                        slotsOnDay.forEach((slot: any) => {
+                            const subj = allSubjects.find((s: any) => s.name === slot.subjectName || s.id === slot.subjectId);
+                            if (!subj) return;
+
+                            const slotId = slot.id || `slot_${slot.subjectId}_${slot.startTime.replace(':', '')}`;
+                            const status = activeAtt?.[dStr]?.[slotId] ?? activeAtt?.[dStr]?.[subj.id] ?? activeAtt?.[dStr]?.[String(subj.id)] ?? null;
+
+                            const timeStr = `${slot.startTime || ''}–${slot.endTime || ''}`;
+                            const hoursStr = getHours(slot.type) === 2 ? '2hrs' : '1hr';
+                            const metaStr = timeStr && hoursStr ? ` <span style="opacity:0.6; font-size:0.7rem;">${timeStr} · ${hoursStr}</span>` : '';
+
+                            let statusIcon = "—";
+                            let statusText = "Not marked";
+                            let sColor = "rgba(255,255,255,0.5)";
+
+                            if (status === 'present') { statusIcon = "✅"; statusText = "Present"; sColor = "#86efac"; }
+                            else if (status === 'absent') { statusIcon = "❌"; statusText = "Absent"; sColor = "#fca5a5"; }
+                            else if (status === 'present_half') { statusIcon = "🌓"; statusText = "Half Day"; sColor = "#fde68a"; }
+                            else if (status === 'class_cancelled') { statusIcon = "🚫"; statusText = "Cancelled"; sColor = "#d1d5db"; }
+                            else if (status === 'excused') { statusIcon = "📝"; statusText = "Excused"; sColor = "#60a5fa"; }
+
+                            tooltipHTML += `<div style="display:flex; justify-content:space-between; margin-bottom:4px; align-items:center; gap:12px;">
+                                <span style="font-size:0.78rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:140px;" title="${subj.name}">${subj.name}${metaStr}</span>
+                                <span style="font-size:0.75rem; color:${sColor}; white-space:nowrap;">${statusIcon} ${statusText}</span>
+                            </div>`;
+                        });
+
+                        // Render extra classes
+                        extraClassesToday.forEach((exc: any) => {
+                            const subj = allSubjects.find((s: any) => s.name === exc.subjectName || s.id === exc.subjectId);
+                            if (!subj) return;
+
+                            const status = (exc.status || activeAtt?.[dStr]?.[exc.subjectId]) ?? activeAtt?.[dStr]?.[subj.id] ?? activeAtt?.[dStr]?.[String(subj.id)] ?? null;
+
+                            const metaStr = ` <span style="background:#f59e0b; color:white; font-size:0.65rem; padding:1px 4px; border-radius:3px; margin-left:4px;">EXTRA</span>`;
+
+                            let statusIcon = "—";
+                            let statusText = "Not marked";
+                            let sColor = "rgba(255,255,255,0.5)";
+
+                            if (status === 'present') { statusIcon = "✅"; statusText = "Present"; sColor = "#86efac"; }
+                            else if (status === 'absent') { statusIcon = "❌"; statusText = "Absent"; sColor = "#fca5a5"; }
+                            else if (status === 'present_half') { statusIcon = "🌓"; statusText = "Half Day"; sColor = "#fde68a"; }
+                            else if (status === 'class_cancelled') { statusIcon = "🚫"; statusText = "Cancelled"; sColor = "#d1d5db"; }
+                            else if (status === 'excused') { statusIcon = "📝"; statusText = "Excused"; sColor = "#60a5fa"; }
+
+                            tooltipHTML += `<div style="display:flex; justify-content:space-between; margin-bottom:4px; align-items:center; gap:12px;">
+                                <span style="font-size:0.78rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:140px;" title="${subj.name}">${subj.name}${metaStr}</span>
+                                <span style="font-size:0.75rem; color:${sColor}; white-space:nowrap;">${statusIcon} ${statusText}</span>
+                            </div>`;
+                        });
+                    }
+
+                    if (tooltip) {
+                        tooltip.innerHTML = tooltipHTML;
+                        tooltip.style.display = 'block';
+                    }
+                });
+
+                cell.addEventListener('mousemove', (e) => {
+                    if (tooltip) {
+                        let left = e.clientX + 12;
+                        let top = e.clientY + 12;
+
+                        // Edge detection
+                        const tooltipRect = tooltip.getBoundingClientRect();
+                        if (left + tooltipRect.width > window.innerWidth) {
+                            left = e.clientX - tooltipRect.width - 12;
+                        }
+                        if (top + tooltipRect.height > window.innerHeight) {
+                            top = e.clientY - tooltipRect.height - 12;
+                        }
+
+                        tooltip.style.left = left + 'px';
+                        tooltip.style.top = top + 'px';
+                    }
+                });
+
+                cell.addEventListener('mouseleave', () => {
+                    if (tooltip) {
+                        tooltip.style.display = 'none';
+                    }
+                });
             }
 
             cell.onclick = () => {
@@ -284,6 +726,113 @@ export function renderAttendance(container: HTMLElement) {
             };
             grid.appendChild(cell);
         }
+
+        // --- Monthly Summary Calculation ---
+        let presentDays = 0;
+        let absentDays = 0;
+        let cancelledDays = 0;
+        let monthTotalHours = 0;
+        let monthPresentHours = 0;
+        let daysWithClasses = 0;
+
+        const schedule = data.timetable || {};
+        const exClasses = Array.isArray(data.extraClasses) ? data.extraClasses : [];
+
+        for (let i = 1; i <= daysInMonth; i++) {
+            const d = new Date(y, m, i);
+            const dStr = toDateStr(d);
+
+            if (dStr < data.semesterConfig.startDate || dStr > data.semesterConfig.endDate) continue;
+
+            const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
+            const dayClassIds = (schedule[dayName] || []).map((entry: any) => entry.subjectId);
+            const extraClassesToday = exClasses.filter((e: any) => e.date === dStr).map((e: any) => e.subjectId);
+            const uniqueSubjectIdsToday = Array.from(new Set([...dayClassIds, ...extraClassesToday]));
+
+            if (uniqueSubjectIdsToday.length === 0 || activeHols.includes(dStr)) continue;
+
+            daysWithClasses++;
+
+            const dayRecord = activeAtt?.[dStr] || {};
+
+            let dayHasPresent = false;
+            let dayHasAbsent = false;
+            let allCancelled = true;
+            let classFound = false;
+
+            uniqueSubjectIdsToday.forEach((subjectId: number) => {
+                const dayClasses = schedule[dayName] || [];
+                // Check Regular Classes
+                for (const cls of dayClasses as any[]) {
+                    if (String(cls.subjectId) === String(subjectId)) {
+                        classFound = true;
+                        const hrs = getHours(cls.type);
+                        const slotId = cls.id || `slot_${cls.subjectId}_${cls.startTime?.replace(':', '')}`;
+                        const status = dayRecord[slotId] ?? dayRecord[cls.subjectId] ?? null;
+
+                        if (status !== 'class_cancelled') {
+                            allCancelled = false;
+                            monthTotalHours += hrs;
+                            if (status === 'present') {
+                                monthPresentHours += hrs;
+                                dayHasPresent = true;
+                            } else if (status === 'present_half') {
+                                monthPresentHours += 0.5 * hrs;
+                                dayHasPresent = true;
+                            } else if (status === 'absent') {
+                                dayHasAbsent = true;
+                            }
+                        }
+                    }
+                }
+
+                // Check Extra Classes
+                const extras = exClasses.filter((e: any) => String(e.subjectId) === String(subjectId) && e.date === dStr);
+                for (const exc of extras as any[]) {
+                    classFound = true;
+                    const hrs = getHours(exc.type);
+                    const status = exc.status || dayRecord[subjectId] || null;
+
+                    if (status !== 'class_cancelled') {
+                        allCancelled = false;
+                        monthTotalHours += hrs;
+                        if (status === 'present') {
+                            monthPresentHours += hrs;
+                            dayHasPresent = true;
+                        } else if (status === 'present_half') {
+                            monthPresentHours += 0.5 * hrs;
+                            dayHasPresent = true;
+                        } else if (status === 'absent') {
+                            dayHasAbsent = true;
+                        }
+                    }
+                }
+            });
+
+            if (dayHasPresent) presentDays++;
+            if (dayHasAbsent) absentDays++;
+            if (classFound && allCancelled) cancelledDays++;
+        }
+
+        const summaryBar = document.getElementById('cal-summary-bar');
+        if (summaryBar) {
+            if (daysWithClasses === 0) {
+                summaryBar.innerHTML = `<div style="text-align:center; width:100%; color:#94a3b8;">No classes scheduled this month</div>`;
+            } else {
+                const monthAttendance = monthTotalHours === 0 ? 100 : (monthPresentHours / monthTotalHours) * 100;
+                const percColor = monthAttendance >= targetPercentage ? '#16a34a' : '#dc2626';
+
+                summaryBar.innerHTML = `
+                    <span>📗 Present: ${presentDays} days</span>
+                    <span style="color:#e5e7eb;">|</span>
+                    <span>📕 Absent: ${absentDays} days</span>
+                    <span style="color:#e5e7eb;">|</span>
+                    <span>⬜ Cancelled: ${cancelledDays} days</span>
+                    <span style="color:#e5e7eb;">|</span>
+                    <span style="font-weight:700; color:${percColor};">📊 This Month: ${monthAttendance.toFixed(1)}%</span>
+                `;
+            }
+        }
     };
 
     const renderPanel = () => {
@@ -299,7 +848,8 @@ export function renderAttendance(container: HTMLElement) {
 
         if (selectedDates.length === 0) {
             $('#panel-date').textContent = 'No date selected';
-            list.innerHTML = '<p style="color:#94a3b8; text-align:center;">Select dates to view.</p>';
+            const emptyMsg = isWhatIfMode ? 'Select dates on the calendar to simulate.' : 'Select dates to view.';
+            list.innerHTML = `<p style="color:#94a3b8; text-align:center; margin-top: 2rem;">${emptyMsg}</p>`;
             return;
         }
 
@@ -307,22 +857,63 @@ export function renderAttendance(container: HTMLElement) {
         const activeHols = getActiveHolidays();
         const currentData = store.getData(); // Fresh data for timetable/extra classes
 
-        // 1. Bulk Mode Logic
-        if (selectedDates.length > 1) {
-            $('#panel-date').textContent = `${selectedDates.length} Days Selected`;
-            dayControls.style.display = 'flex'; // Use same controls for bulk
+        // Handle right panel visibility if in bulk mode
+        if (isBulkMode) {
+            dayControls.style.display = 'none';
 
-            list.innerHTML = `
-                <div style="background:#eff6ff; padding:1.5rem; border-radius:12px; border:1px solid #bfdbfe;">
-                    <h4 style="margin-bottom:0.5rem; color:#1e40af;">Bulk Action Mode</h4>
-                    <p style="font-size:0.9rem; color:#60a5fa;">Applying an action will update all subjects for all ${selectedDates.length} selected days.</p>
-                    <ul style="margin-top:1rem; padding-left:1.2rem; gap:4px; display:grid; font-size:0.9rem; color:#64748b;">
-                        ${selectedDates.slice(0, 5).map(d => `<li>${new Date(d).toLocaleDateString()}</li>`).join('')}
-                        ${selectedDates.length > 5 ? `<li>...and ${selectedDates.length - 5} more</li>` : ''}
-                    </ul>
-                </div>
-            `;
-            return; // Stop here for bulk
+            if (selectedDates.length === 0) {
+                $('#panel-date').textContent = 'Select Multiple Dates';
+                list.innerHTML = `
+                    <div style="text-align:center; padding: 2rem 1rem;">
+                        <p style="color:#6b7280; margin:0;">Tap dates on the calendar to select them</p>
+                    </div>
+                `;
+            } else {
+                $('#panel-date').textContent = '';
+
+                const dateChips = selectedDates.map(d => {
+                    const label = new Date(d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                    return `<span style="background:#eff6ff; border:1px solid #bfdbfe; color:#1d4ed8; padding:4px 10px; border-radius:20px; font-size:0.78rem; font-weight:500;">${label}</span>`;
+                }).join('');
+
+                list.innerHTML = `
+                    <style>
+                        .bulk-pnl-btn { transition: all 0.15s ease; }
+                        .bulk-pnl-btn:hover { transform: translateY(-1px); }
+                    </style>
+                    <div style="font-size:0.95rem; font-weight:600; color:#111827; margin-bottom:10px;">
+                        ${selectedDates.length} dates selected
+                    </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; max-height:120px; overflow-y:auto;">
+                        ${dateChips}
+                    </div>
+                    <div style="display:flex; flex-direction:column;">
+                        <button id="bulk-pnl-present" class="bulk-pnl-btn" style="width:100%; padding:12px 16px; border-radius:10px; font-size:0.875rem; font-weight:500; border:none; background:linear-gradient(135deg, #16a34a, #15803d); color:white; cursor:pointer; margin-bottom:8px; box-shadow:0 2px 8px rgba(22,163,74,0.3);">
+                            ✅ Mark All Present
+                        </button>
+                        <button id="bulk-pnl-absent" class="bulk-pnl-btn" style="width:100%; padding:12px 16px; border-radius:10px; font-size:0.875rem; font-weight:500; border:none; background:linear-gradient(135deg, #dc2626, #b91c1c); color:white; cursor:pointer; margin-bottom:8px; box-shadow:0 2px 8px rgba(220,38,38,0.3);">
+                            ❌ Mark All Absent
+                        </button>
+                        <button id="bulk-pnl-cancel" class="bulk-pnl-btn" style="width:100%; padding:12px 16px; border-radius:10px; font-size:0.875rem; font-weight:500; border:none; background:linear-gradient(135deg, #6b7280, #4b5563); color:white; cursor:pointer; margin-bottom:8px; box-shadow:0 2px 8px rgba(107,114,128,0.3);">
+                            🚫 Mark All Cancelled
+                        </button>
+                        <button id="bulk-pnl-clear" class="bulk-pnl-btn" style="width:100%; padding:10px 16px; border-radius:10px; font-size:0.875rem; border:1.5px solid #e5e7eb; background:white; color:#6b7280; cursor:pointer;">
+                            ✖ Clear Selection
+                        </button>
+                    </div>
+                `;
+
+                setTimeout(() => {
+                    document.getElementById('bulk-pnl-present')?.addEventListener('click', () => applyBulk('present'));
+                    document.getElementById('bulk-pnl-absent')?.addEventListener('click', () => applyBulk('absent'));
+                    document.getElementById('bulk-pnl-cancel')?.addEventListener('click', () => applyBulk('class_cancelled'));
+                    document.getElementById('bulk-pnl-clear')?.addEventListener('click', () => {
+                        selectedDates = [];
+                        renderCal(); renderPanel();
+                    });
+                }, 0);
+            }
+            return;
         }
 
         // 2. Single Day Logic
@@ -337,7 +928,7 @@ export function renderAttendance(container: HTMLElement) {
         // Holiday Check
         if (activeHols.includes(dStr)) {
             list.innerHTML = `
-                <div style="text-align:center; padding:2rem; background:#fffbeb; border-radius:12px; border:1px solid #fcd34d;">
+                <div style="text-align:center; padding:20px; background:#fffbeb; border-radius:12px; border:1px solid #fcd34d;">
                     <span style="font-size:2rem;">🎉</span>
                     <h3 style="margin:1rem 0; color:#b45309;">Holiday</h3>
                     <p style="color:#78350f;">No attendance required.</p>
@@ -378,15 +969,17 @@ export function renderAttendance(container: HTMLElement) {
 
         // Render regular timetable classes
         schedule.forEach((entry: any) => {
-            const status = activeAtt[dStr]?.[entry.subjectId] || undefined;
-            const reason = activeReasons[dStr]?.[entry.subjectId];
+            // Need entry.id for new slot-based keying. If missing, generate fallback.
+            const slotId = entry.id || `slot_${entry.subjectId}_${entry.startTime.replace(':', '')}`;
+            const status = activeAtt[dStr]?.[slotId] || undefined;
+            const reason = activeReasons[dStr]?.[slotId];
             const row = createClassCard(entry, status, dStr, false, undefined, reason);
             list.appendChild(row);
         });
 
         // Render extra classes
         extraClasses.forEach((extraClass: any, idx: number) => {
-            const subject = currentData!.subjects.find(s => s.id === extraClass.subjectId);
+            const subject = currentData!.subjects.find(s => s.name === extraClass.subjectName || s.id === extraClass.subjectId);
             if (!subject) return;
 
             const entry = {
@@ -451,7 +1044,8 @@ export function renderAttendance(container: HTMLElement) {
                 if (isExtra && extraIdx !== undefined) {
                     markExtraClass(dStr, extraIdx, action);
                 } else {
-                    markSingle(dStr, entry.subjectId, action);
+                    const slotId = entry.id || `slot_${entry.subjectId}_${entry.startTime.replace(':', '')}`;
+                    markSingle(dStr, slotId, entry.subjectId, action);
                 }
             });
         });
@@ -466,31 +1060,46 @@ export function renderAttendance(container: HTMLElement) {
     // --- Actions ---
 
     // 1. Mark Single Class (Toggle Logic)
-    const markSingle = async (date: string, subId: number, status: string) => {
+    const markSingle = async (date: string, slotId: string, subId: number, status: string) => {
         const d = store.getData();
-        const target = isWhatIfMode ? simulatedAttendance : (d?.attendance || {});
+        const target = isWhatIfMode ? (simulatedAttendance || {}) : (d?.attendance || {});
         const reasons = isWhatIfMode ? {} : (d?.attendanceReasons || {});
 
         if (!target[date]) target[date] = {};
         if (!reasons[date]) reasons[date] = {};
 
-        // Toggle Logic: If clicking same status, undo (delete). Else set.
-        if (target[date][subId] === status) {
-            delete target[date][subId];
-            if (reasons[date]?.[subId]) delete reasons[date][subId];
-            // Cleanup empty object if needed, but not strictly necessary for logic
-            if (Object.keys(target[date]).length === 0) delete target[date];
+        const subj = data.subjects.find(s => s.id === subId);
+        const subjName = subj ? subj.name : 'Subject';
+        const formattedDate = new Date(date).toLocaleDateString();
+
+        const existingStatus = target[date][slotId];
+
+        // Toggle Logic: If clicking same status, undo (delete)
+        if (existingStatus === status) {
+            delete target[date][slotId];
+            if (reasons[date]?.[slotId]) delete reasons[date][slotId];
+            showToast(`↩️ ${subjName} unmarked for ${formattedDate}`, '#6b7280');
         } else {
             // New Status
             if (status === 'absent') {
-                const reason = await AbsenceModal.ask();
-                if (!reason) return; // Cancelled
-                reasons[date][subId] = reason;
+                if (isWhatIfMode) {
+                    // Skip absence reason modal in simulation
+                    showToast(`❌ ${subjName} marked Absent`, '#dc2626');
+                } else {
+                    const reason = await AbsenceModal.ask(date);
+                    if (!reason) return; // Cancelled
+                    reasons[date][slotId] = reason;
+                    showToast(`❌ ${subjName} marked Absent`, '#dc2626');
+                }
             } else {
-                // If switching from absent to present, remove reason
-                if (reasons[date]?.[subId]) delete reasons[date][subId];
+                // If switching from absent to something else, remove reason
+                if (reasons[date]?.[slotId]) delete reasons[date][slotId];
+
+                if (status === 'present') showToast(`✅ ${subjName} marked Present`, '#16a34a');
+                else if (status === 'present_half') showToast(`🌓 ${subjName} marked Half Day`, '#f97316');
+                else if (status === 'class_cancelled') showToast(`🚫 Class marked Cancelled`, '#6b7280');
             }
-            target[date][subId] = status as any;
+            target[date][slotId] = status as any;
         }
 
         if (!isWhatIfMode) {
@@ -511,8 +1120,12 @@ export function renderAttendance(container: HTMLElement) {
 
         let reason: string | null = null;
         if (status === 'absent') {
-            reason = await AbsenceModal.ask();
-            if (!reason) return; // Cancelled
+            if (isWhatIfMode) {
+                // Skip absence reason modal in simulation
+            } else {
+                reason = await AbsenceModal.ask(selectedDates[0]);
+                if (!reason) return; // Cancelled
+            }
         }
 
         const d = store.getData();
@@ -538,7 +1151,8 @@ export function renderAttendance(container: HTMLElement) {
             if (schedule.length > 0) {
                 hasEligible = true;
                 for (const entry of schedule) {
-                    if (target[dStr]?.[entry.subjectId] !== status) {
+                    const slotId = entry.id || `slot_${entry.subjectId}_${entry.startTime.replace(':', '')}`;
+                    if (target[dStr]?.[slotId] !== status) {
                         allAlreadySet = false;
                         break;
                     }
@@ -561,17 +1175,18 @@ export function renderAttendance(container: HTMLElement) {
                     if (!reasons[dStr]) reasons[dStr] = {};
 
                     schedule.forEach((entry: any) => {
+                        const slotId = entry.id || `slot_${entry.subjectId}_${entry.startTime.replace(':', '')}`;
                         if (allAlreadySet) {
                             // Toggle Off / Undo
-                            delete target[dStr][entry.subjectId];
-                            if (reasons[dStr]?.[entry.subjectId]) delete reasons[dStr][entry.subjectId];
+                            delete target[dStr][slotId];
+                            if (reasons[dStr]?.[slotId]) delete reasons[dStr][slotId];
                         } else {
                             // Set New
-                            target[dStr][entry.subjectId] = status as any;
+                            target[dStr][slotId] = status as any;
                             if (status === 'absent' && reason) {
-                                reasons[dStr][entry.subjectId] = reason;
+                                reasons[dStr][slotId] = reason;
                             } else {
-                                if (reasons[dStr]?.[entry.subjectId]) delete reasons[dStr][entry.subjectId];
+                                if (reasons[dStr]?.[slotId]) delete reasons[dStr][slotId];
                             }
                         }
                     });
@@ -584,6 +1199,15 @@ export function renderAttendance(container: HTMLElement) {
             if (!isWhatIfMode) {
                 store.updateUserData({ attendance: target, attendanceReasons: reasons });
             }
+
+            if (status === 'present') showToast(`✅ ${selectedDates.length} days marked as Present`, '#16a34a');
+            else if (status === 'present_half' as any) showToast(`🌓 ${selectedDates.length} days marked as Half Day`, '#f97316');
+            else if (status === 'absent') showToast(`❌ ${selectedDates.length} days marked as Absent`, '#dc2626');
+            else if (status === 'class_cancelled') showToast(`🚫 ${selectedDates.length} days marked Cancelled`, '#6b7280');
+
+            // Exit bulk mode
+            isBulkMode = false;
+            selectedDates = [toDateStr(new Date())];
 
             renderCal();
             renderPanel();
@@ -633,7 +1257,7 @@ export function renderAttendance(container: HTMLElement) {
                 delete extras[date][idx].absenceReason;
             } else {
                 if (status === 'absent') {
-                    const reason = await AbsenceModal.ask();
+                    const reason = await AbsenceModal.ask(date);
                     if (!reason) return;
                     extras[date][idx].absenceReason = reason;
                 } else {
@@ -674,33 +1298,77 @@ export function renderAttendance(container: HTMLElement) {
         let html = '';
         const subjects = d.subjects;
 
+        // Keep track of risk counts for the summary bar
+        let safeCount = 0;
+        let atRiskCount = 0;
+        let dangerCount = 0;
+
         subjects.forEach(sub => {
-            // Construct simulated data object for calculation
+            if (!sub.totalClasses || sub.totalClasses === 0) return;
+
+            // Build simulated data for getSubjectMetrics
             const simData = {
                 ...d,
                 attendance: simulatedAttendance,
                 holidays: simulatedHolidays
-                // extraClasses are not simulated yet, using actual data
-            };
+            } as any;
 
-            const current = calculateSubjectAttendance(sub.id, d);
-            const simulated = calculateSubjectAttendance(sub.id, simData);
+            // Get metrics for real and simulated
+            const realMetrics = getSubjectMetrics(sub, d);
+            const simMetrics = getSubjectMetrics(sub, simData);
 
-            const currentPct = current.percentage;
-            const simulatedPct = simulated.percentage;
-            const diff = simulatedPct - currentPct;
+            const diff = simMetrics.currentPercent - realMetrics.currentPercent;
+            const impactClass = diff > 0 ? 'positive' : (diff < 0 ? 'negative' : '');
 
-            const isPositive = diff > 0;
-            const isNegative = diff < 0;
-            const diffColor = isPositive ? '#10b981' : (isNegative ? '#ef4444' : '#94a3b8');
-            const impactClass = isPositive ? 'positive' : (isNegative ? 'negative' : '');
-            const diffIcon = isPositive ? '↑' : (isNegative ? '↓' : '—');
+            // Badge from simulated risk level
+            let badgeText = '';
+            let badgeBg = '';
+            let badgeColor = '';
 
-            // Determine Risk
-            const isSafe = simulatedPct >= d.semesterConfig.minAttendance;
-            const riskBadge = isSafe
-                ? `<span class="risk-badge risk-safe">SAFE</span>`
-                : `<span class="risk-badge risk-danger">RISK</span>`;
+            if (simMetrics.riskLevel === 'Safe') {
+                badgeText = '🟢 Safe';
+                badgeBg = '#dcfce7';
+                badgeColor = '#16a34a';
+                safeCount++;
+            } else if (simMetrics.riskLevel === 'At Risk') {
+                badgeText = '🟡 At Risk';
+                badgeBg = '#fef9c3';
+                badgeColor = '#ca8a04';
+                atRiskCount++;
+            } else {
+                badgeText = '🔴 Danger';
+                badgeBg = '#fee2e2';
+                badgeColor = '#dc2626';
+                dangerCount++;
+            }
+
+            const riskBadge = `<span style="background:${badgeBg}; color:${badgeColor}; font-size:0.75rem; font-weight:700; padding:4px 10px; border-radius:12px; display:inline-block;">${badgeText}</span>`;
+
+            // Line 2 — Semester target status
+            let targetStatusHtml = '';
+            if (simMetrics.bufferHours <= 0) {
+                targetStatusHtml = `<div style="margin-top:0.5rem; font-size:0.85rem; color:#16a34a; font-weight:500;">✅ Semester target secured!</div>`;
+            } else if (simMetrics.bufferHours <= simMetrics.remainingHours) {
+                targetStatusHtml = `<div style="margin-top:0.5rem; font-size:0.85rem; color:#f97316; font-weight:500;">📚 Need ${Math.ceil(simMetrics.bufferHours)} more hrs to secure target</div>`;
+            } else {
+                targetStatusHtml = `<div style="margin-top:0.5rem; font-size:0.85rem; color:#ef4444; font-weight:500;">🔴 Cannot secure target — need ${Math.ceil(simMetrics.bufferHours)} hrs but only ${Math.ceil(simMetrics.remainingHours)} remaining</div>`;
+            }
+
+            // Summary line
+            const summaryLine = `<div style="margin-top:0.25rem; font-size:0.78rem; color:#6b7280;">📅 ${simMetrics.presentHours} hrs present · ${simMetrics.hoursHeldSoFar} hrs held · ${simMetrics.totalHours} hrs total</div>`;
+
+            // Display percent capped at 100
+            const displayPercent = Math.min(simMetrics.currentPercent, 100);
+            const isSimulated = simMetrics.presentHours > simMetrics.hoursHeldSoFar;
+            const percentLabel = isSimulated ? `${displayPercent.toFixed(1)}% (simulated)` : `${displayPercent.toFixed(1)}%`;
+
+            // Diff uses capped display percent vs real
+            const cappedRealPercent = Math.min(realMetrics.currentPercent, 100);
+            const displayDiff = displayPercent - cappedRealPercent;
+            const isDiffPositive = displayDiff > 0;
+            const isDiffNegative = displayDiff < 0;
+            const displayDiffColor = isDiffPositive ? '#10b981' : (isDiffNegative ? '#ef4444' : '#94a3b8');
+            const displayDiffIcon = isDiffPositive ? '↑' : (isDiffNegative ? '↓' : '—');
 
             html += `
                 <div class="impact-item ${impactClass}">
@@ -710,18 +1378,40 @@ export function renderAttendance(container: HTMLElement) {
                     </div>
                     
                     <div style="display:flex; align-items:baseline; justify-content:space-between;">
-                        <div style="font-size:1.5rem; font-weight:700; color:${diffColor};">
-                            ${simulatedPct.toFixed(1)}%
+                        <div style="font-size:1.5rem; font-weight:700; color:${displayDiffColor};">
+                            ${percentLabel}
                         </div>
-                        <div style="font-size:0.85rem; color:${diffColor}; font-weight:600;">
-                            ${diffIcon} ${Math.abs(diff).toFixed(1)}%
+                        <div style="font-size:0.85rem; color:${displayDiffColor}; font-weight:600;">
+                            ${displayDiffIcon} ${displayDiff >= 0 ? '+' : ''}${displayDiff.toFixed(1)}%
                         </div>
                     </div>
+                    <div style="font-size:0.8rem; color:#6b7280; margin-top:0.25rem;">Present: ${simMetrics.presentHours} hrs / ${simMetrics.hoursHeldSoFar} hrs held</div>
+                    ${targetStatusHtml}
+                    ${summaryLine}
                 </div>
             `;
         });
 
-        preview.innerHTML = html || '<p style="color:#94a3b8; text-align:center;">No changes yet</p>';
+        // Generate Summary Bar HTML
+        let summaryMessage = '';
+        if (dangerCount > 0) summaryMessage = `⚠️ Act now — ${dangerCount} subject${dangerCount > 1 ? 's' : ''} need immediate attention`;
+        else if (atRiskCount > 0) summaryMessage = `📊 You're close on ${atRiskCount} subject${atRiskCount > 1 ? 's' : ''} — attend consistently`;
+        else summaryMessage = `✅ You're on track across all subjects!`;
+
+        const summaryBarHtml = `
+            <div style="grid-column: 1 / -1; background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+                <div style="display:flex; justify-content:space-evenly; font-weight:500; font-size:1rem; margin-bottom:8px;">
+                     <span style="color:#16a34a;">🟢 ${safeCount} Safe</span>
+                     <span style="color:#ca8a04;">🟡 ${atRiskCount} At Risk</span>
+                     <span style="color:#dc2626;">🔴 ${dangerCount} Danger</span>
+                </div>
+                <div style="text-align:center; font-size:0.9rem; color:#4b5563;">
+                    ${summaryMessage}
+                </div>
+            </div>
+        `;
+
+        preview.innerHTML = html ? (summaryBarHtml + html) : '<p style="color:#94a3b8; text-align:center;">No changes yet</p>';
     };
 
     // What-If Mode Toggle
@@ -874,16 +1564,52 @@ export function renderAttendance(container: HTMLElement) {
     // Event Listeners
     $('#toggle-bulk').addEventListener('click', () => {
         isBulkMode = !isBulkMode;
-        $('#toggle-bulk').style.background = isBulkMode ? 'var(--color-primary)' : '';
-        $('#toggle-bulk').style.color = isBulkMode ? 'white' : '';
-        $('#toggle-bulk').textContent = isBulkMode ? 'Done Selecting' : 'Select Multiple';
-        if (!isBulkMode) selectedDates = [toDateStr(new Date())]; // Reset to single
+        if (isBulkMode) {
+            $('#toggle-bulk').classList.add('active');
+            selectedDates = []; // Clear selection when entering bulk mode
+        } else {
+            $('#toggle-bulk').classList.remove('active');
+            selectedDates = [toDateStr(new Date())]; // Reset to single today selection
+        }
         renderCal(); renderPanel();
     });
 
-    $('#prev-m').addEventListener('click', () => { cursorDate.setMonth(cursorDate.getMonth() - 1); renderCal(); });
-    $('#next-m').addEventListener('click', () => { cursorDate.setMonth(cursorDate.getMonth() + 1); renderCal(); });
+    $('#today-btn').addEventListener('click', () => {
+        const now = new Date();
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+        cursorDate.setMonth(currentMonth);
+        cursorDate.setFullYear(currentYear);
+        if (!isBulkMode) selectedDates = [toDateStr(now)];
+        renderCal();
+        renderPanel();
+    });
 
+    $('#prev-m')?.addEventListener('click', () => {
+        let m = cursorDate.getMonth() - 1;
+        let y = cursorDate.getFullYear();
+        if (m < 0) {
+            m = 11;
+            y -= 1;
+        }
+        cursorDate.setMonth(m);
+        cursorDate.setFullYear(y);
+        renderCal();
+    });
+
+    $('#next-m')?.addEventListener('click', () => {
+        let m = cursorDate.getMonth() + 1;
+        let y = cursorDate.getFullYear();
+        if (m > 11) {
+            m = 0;
+            y += 1;
+        }
+        cursorDate.setMonth(m);
+        cursorDate.setFullYear(y);
+        renderCal();
+    });
+
+    // Day control bindings (mark-day buttons are in the right panel)
     $('#mark-day-p').addEventListener('click', () => applyBulk('present'));
     $('#mark-day-a').addEventListener('click', () => applyBulk('absent'));
     $('#mark-day-h').addEventListener('click', () => applyBulk('holiday'));
@@ -901,7 +1627,7 @@ style.innerHTML = `
     padding: 6px 12px;
     border: 1px solid #e2e8f0;
     background: white;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     font-size: 0.85rem;
     color: #64748b;

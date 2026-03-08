@@ -122,7 +122,18 @@ Create a `.env.local` file in the root directory:
 ```env
 VITE_AUTH0_DOMAIN=your-auth0-domain
 VITE_AUTH0_CLIENT_ID=your-client-id
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
+
+Or reference the table below:
+
+| Variable | Required | Description |
+|---|---|---|
+| `VITE_AUTH0_DOMAIN` | ✅ | Your Auth0 application domain |
+| `VITE_AUTH0_CLIENT_ID`| ✅ | Your Auth0 client ID |
+| `VITE_SUPABASE_URL` | ✅ | Your Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY`| ✅ | Your Supabase anon/public key |
 
 ---
 

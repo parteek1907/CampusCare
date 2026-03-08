@@ -1,120 +1,256 @@
-import { $ } from '../utils';
+
+const ABSENCE_REASONS = [
+    { id: 'sick', label: '🤒 Sick / Health Issue' },
+    { id: 'travel', label: '✈️ Travelling' },
+    { id: 'overslept', label: '😴 Overslept' },
+    { id: 'festival', label: '🎉 Festival / Holiday' },
+    { id: 'personal', label: '🧾 Personal Work' },
+    { id: 'academic', label: '📖 Academic Preparation' },
+    { id: 'home', label: '🏠 Gone Home / Out of Town' },
+    { id: 'other', label: '💬 Other' },
+];
+
+function getDateWording(dateString?: string) {
+    if (!dateString) return { heading: 'Why were you absent?', subtext: 'Select the reason for your absence', submitText: 'Save Reason' };
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const classDate = new Date(dateString);
+    classDate.setHours(0, 0, 0, 0);
+
+    if (classDate.getTime() < today.getTime()) {
+        return { heading: 'Why were you absent?', subtext: 'Select the reason for your absence', submitText: 'Save Reason' };
+    } else if (classDate.getTime() === today.getTime()) {
+        return { heading: 'Why are you absent today?', subtext: 'Select the reason for missing class', submitText: 'Save Reason' };
+    } else {
+        return { heading: 'Why are you planning to skip?', subtext: 'Select your planned reason for absence', submitText: 'Save Plan' };
+    }
+}
 
 export class AbsenceModal {
     private static instance: AbsenceModal;
     private container: HTMLElement;
     private resolvePromise: ((value: string | null) => void) | null = null;
+    private selectedReason: string | null = null;
+    private styleInjected = false;
 
     private constructor() {
         this.container = document.createElement('div');
         this.container.id = 'absence-modal';
-        this.container.className = 'modal-backdrop hidden';
-
-        // Using existing modal styles (modal-backdrop, modal-content) from style.css likely, 
-        // or defining inline to match EXACTLY as requested if style.css classes aren't sufficient.
-        // Based on Modal.ts, it uses 'modal-backdrop' and 'modal-content'.
-        this.container.innerHTML = `
-            <div class="modal-content" style="max-width: 400px;">
-                <h3 style="margin-bottom:1rem; font-size:1.25rem; text-align:center;">Why were you absent?</h3>
-                
-                <div id="reason-options" style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:1.5rem;">
-                    <button class="reason-btn" data-reason="Health Issue">Health Issue</button>
-                    <button class="reason-btn" data-reason="Personal Work">Personal Work</button>
-                    <button class="reason-btn" data-reason="Academic Preparation">Academic Preparation</button>
-                    <button class="reason-btn" data-reason="Travel">Travel</button>
-                    <button class="reason-btn" data-reason="Family Responsibility">Family Responsibility</button>
-                    <button class="reason-btn" data-reason="Other">Other</button>
-                </div>
-
-                <div id="other-reason-container" class="hidden" style="margin-bottom:1rem; animation:fadeUp 0.2s ease-out;">
-                    <textarea id="other-reason-input" placeholder="Please specify your reason..." rows="3" 
-                        style="width:100%; padding:0.75rem; border:1px solid #e2e8f0; border-radius:8px; font-family:inherit; resize:vertical;"></textarea>
-                </div>
-
-                <div class="modal-actions" style="display:flex; gap:10px; justify-content:flex-end;">
-                    <button id="abs-cancel" class="btn btn-secondary" style="flex:1;">Cancel</button>
-                    <button id="abs-confirm" class="btn" style="flex:1;" disabled>Confirm</button>
-                </div>
-            </div>
-        `;
         document.body.appendChild(this.container);
+    }
 
-        // Styling for reason buttons (mimicking radio behavior visually)
+    private injectStyles() {
+        if (this.styleInjected) return;
+        this.styleInjected = true;
+
         const style = document.createElement('style');
         style.innerHTML = `
-            .reason-btn {
+            @keyframes absSlideUp {
+                from { opacity: 0; transform: translateY(16px); }
+                to   { opacity: 1; transform: translateY(0); }
+            }
+
+            #absence-modal {
+                display: none;
+                position: fixed;
+                inset: 0;
+                z-index: 9999;
+                background: rgba(0, 0, 0, 0.4);
+                backdrop-filter: blur(4px);
+                place-items: center;
+            }
+            #absence-modal.visible {
+                display: grid;
+            }
+
+            .abs-modal-box {
                 background: white;
-                border: 1px solid #e2e8f0;
-                padding: 0.75rem;
-                border-radius: 8px;
-                text-align: left;
-                cursor: pointer;
-                transition: all 0.2s;
-                font-weight: 500;
-                color: #475569;
+                border-radius: 16px;
+                padding: 24px;
+                width: min(380px, calc(100vw - 32px));
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+                animation: absSlideUp 0.2s ease;
             }
-            .reason-btn:hover {
-                border-color: var(--color-primary);
+
+            .abs-heading {
+                font-size: 1.1rem;
+                font-weight: 700;
+                color: #111827;
+                margin: 0 0 4px;
+            }
+            .abs-subtext {
+                font-size: 0.85rem;
+                color: #6b7280;
+                margin: 0 0 16px;
+            }
+
+            .abs-reasons-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+                margin-bottom: 20px;
+            }
+
+            .abs-reason-btn {
                 background: #f8fafc;
+                border: 1.5px solid #e5e7eb;
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-size: 0.85rem;
+                color: #374151;
+                cursor: pointer;
+                text-align: left;
+                transition: all 0.15s ease;
+                font-family: inherit;
             }
-            .reason-btn.selected {
+            .abs-reason-btn:hover {
                 background: #eff6ff;
-                border-color: var(--color-primary);
-                color: var(--color-primary);
-                font-weight: 600;
-                box-shadow: 0 0 0 1px var(--color-primary);
+                border-color: #2563eb;
+                color: #1d4ed8;
+            }
+            .abs-reason-btn.selected {
+                background: #eff6ff;
+                border-color: #2563eb;
+                color: #1d4ed8;
+                font-weight: 500;
+            }
+            .abs-reason-btn.full-width {
+                grid-column: 1 / -1;
+            }
+
+            .abs-other-input {
+                width: 100%;
+                padding: 10px 12px;
+                border: 1.5px solid #e5e7eb;
+                border-radius: 10px;
+                font-family: inherit;
+                font-size: 0.85rem;
+                resize: vertical;
+                margin-bottom: 16px;
+                box-sizing: border-box;
+                transition: border-color 0.15s ease;
+            }
+            .abs-other-input:focus {
+                outline: none;
+                border-color: #2563eb;
+            }
+
+            .abs-actions {
+                display: flex;
+                gap: 8px;
+                justify-content: flex-end;
+            }
+            .abs-skip-btn {
+                background: none;
+                border: none;
+                color: #9ca3af;
+                font-size: 0.85rem;
+                padding: 8px 12px;
+                cursor: pointer;
+                font-family: inherit;
+            }
+            .abs-skip-btn:hover {
+                color: #6b7280;
+            }
+            .abs-submit-btn {
+                background: #2563eb;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-size: 0.875rem;
+                font-weight: 500;
+                cursor: pointer;
+                font-family: inherit;
+                transition: background 0.15s ease;
+            }
+            .abs-submit-btn:hover:not(:disabled) {
+                background: #1d4ed8;
+            }
+            .abs-submit-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
             }
         `;
         document.head.appendChild(style);
+    }
+
+    private render(dateString?: string) {
+        const wording = getDateWording(dateString);
+
+        const reasonButtons = ABSENCE_REASONS.map(r => {
+            const isOther = r.id === 'other';
+            return `<button class="abs-reason-btn${isOther ? ' full-width' : ''}" data-reason="${r.id}" data-label="${r.label}">${r.label}</button>`;
+        }).join('');
+
+        this.container.innerHTML = `
+            <div class="abs-modal-box">
+                <h3 class="abs-heading">${wording.heading}</h3>
+                <p class="abs-subtext">${wording.subtext}</p>
+                
+                <div class="abs-reasons-grid">
+                    ${reasonButtons}
+                </div>
+
+                <textarea class="abs-other-input" id="abs-other-text" placeholder="Please specify your reason..." rows="2" style="display:none;"></textarea>
+
+                <div class="abs-actions">
+                    <button class="abs-skip-btn" id="abs-skip">Skip</button>
+                    <button class="abs-submit-btn" id="abs-submit" disabled>${wording.submitText}</button>
+                </div>
+            </div>
+        `;
 
         this.setupListeners();
     }
 
     private setupListeners() {
-        const options = this.container.querySelectorAll('.reason-btn');
-        const otherContainer = $<HTMLDivElement>('#other-reason-container');
-        const otherInput = $<HTMLTextAreaElement>('#other-reason-input');
-        const confirmBtn = $<HTMLButtonElement>('#abs-confirm');
-        const cancelBtn = $<HTMLButtonElement>('#abs-cancel');
+        this.selectedReason = null;
 
-        let selectedReason: string | null = null;
+        const buttons = this.container.querySelectorAll('.abs-reason-btn');
+        const otherInput = this.container.querySelector('#abs-other-text') as HTMLTextAreaElement;
+        const submitBtn = this.container.querySelector('#abs-submit') as HTMLButtonElement;
+        const skipBtn = this.container.querySelector('#abs-skip') as HTMLButtonElement;
 
-        options.forEach(btn => {
+        buttons.forEach(btn => {
             btn.addEventListener('click', () => {
-                // UI Toggle
-                options.forEach(b => b.classList.remove('selected'));
+                buttons.forEach(b => b.classList.remove('selected'));
                 btn.classList.add('selected');
 
-                const val = btn.getAttribute('data-reason');
-                if (val === 'Other') {
-                    otherContainer.classList.remove('hidden');
+                const reasonId = btn.getAttribute('data-reason');
+                const reasonLabel = btn.getAttribute('data-label') || reasonId || '';
+
+                if (reasonId === 'other') {
+                    otherInput.style.display = 'block';
                     otherInput.focus();
-                    selectedReason = otherInput.value.trim() || null; // Wait for input
-                    confirmBtn.disabled = !selectedReason;
+                    this.selectedReason = otherInput.value.trim() || null;
+                    submitBtn.disabled = !this.selectedReason;
                 } else {
-                    otherContainer.classList.add('hidden');
-                    selectedReason = val;
-                    confirmBtn.disabled = false;
+                    otherInput.style.display = 'none';
+                    this.selectedReason = reasonLabel;
+                    submitBtn.disabled = false;
                 }
             });
         });
 
         otherInput.addEventListener('input', () => {
-            if ($('.reason-btn.selected')?.getAttribute('data-reason') === 'Other') {
-                selectedReason = otherInput.value.trim();
-                confirmBtn.disabled = !selectedReason;
+            const selectedBtn = this.container.querySelector('.abs-reason-btn.selected');
+            if (selectedBtn?.getAttribute('data-reason') === 'other') {
+                this.selectedReason = otherInput.value.trim() || null;
+                submitBtn.disabled = !this.selectedReason;
             }
         });
 
-        confirmBtn.addEventListener('click', () => {
-            if (selectedReason) this.complete(selectedReason);
+        submitBtn.addEventListener('click', () => {
+            if (this.selectedReason) this.complete(this.selectedReason);
         });
 
-        cancelBtn.addEventListener('click', () => this.complete(null));
+        skipBtn.addEventListener('click', () => this.complete(null));
 
-        // Click outside
+        // Click outside modal box to dismiss
         this.container.addEventListener('click', (e) => {
-            if (e.target === this.container) this.complete(null); // click backdrop
+            if (e.target === this.container) this.complete(null);
         });
     }
 
@@ -123,21 +259,16 @@ export class AbsenceModal {
         return AbsenceModal.instance;
     }
 
-    public static ask(): Promise<string | null> {
-        return AbsenceModal.getInstance().show();
+    public static ask(dateString?: string): Promise<string | null> {
+        return AbsenceModal.getInstance().show(dateString);
     }
 
-    private show(): Promise<string | null> {
+    private show(dateString?: string): Promise<string | null> {
         return new Promise((resolve) => {
             this.resolvePromise = resolve;
-
-            // Reset State
-            this.container.querySelectorAll('.reason-btn').forEach(b => b.classList.remove('selected'));
-            $<HTMLDivElement>('#other-reason-container').classList.add('hidden');
-            $<HTMLTextAreaElement>('#other-reason-input').value = '';
-            $<HTMLButtonElement>('#abs-confirm').disabled = true;
-
-            this.container.classList.remove('hidden');
+            this.injectStyles();
+            this.render(dateString);
+            this.container.classList.add('visible');
         });
     }
 
@@ -146,6 +277,6 @@ export class AbsenceModal {
             this.resolvePromise(val);
             this.resolvePromise = null;
         }
-        this.container.classList.add('hidden');
+        this.container.classList.remove('visible');
     }
 }

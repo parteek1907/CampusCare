@@ -31,6 +31,7 @@ export interface Subject {
 }
 
 export interface TimetableEntry {
+    id: string; // New slot ID e.g. "slot_123_09:00"
     subjectId: number;
     subjectName: string;
     type: 'Theory' | 'Lab' | 'Tutorial';
@@ -55,7 +56,7 @@ export type AttendanceStatus = 'present' | 'present_half' | 'absent' | 'excused'
 
 export interface AttendanceRecord {
     [date: string]: {
-        [subjectId: number]: AttendanceStatus;
+        [slotId: string]: AttendanceStatus;
     };
 }
 
@@ -74,8 +75,8 @@ export interface UserData {
     subjects: Subject[];
     timetable: Timetable;
     attendance: AttendanceRecord;
-    attendanceReasons: { [date: string]: { [subjectId: number]: string } };
-    attendanceNotes: { [date: string]: { [subjectId: number]: string } };
+    attendanceReasons: { [date: string]: { [slotId: string]: string } };
+    attendanceNotes: { [date: string]: { [slotId: string]: string } };
     extraClasses: { [date: string]: ExtraClassRecord[] };
     holidays: string[];
     grades: GradeEntry[];
@@ -83,6 +84,11 @@ export interface UserData {
     preferences: {
         cgpaMode: 'marks' | 'grade';
     };
+    sgpaHistory: {
+        sgpa: number;
+        totalCredits: number;
+        savedAt: string;
+    } | null;
 }
 
 export interface UserProfile {

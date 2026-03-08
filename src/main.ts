@@ -10,30 +10,35 @@ import { $ } from './utils';
 import { initAuth0, login, logout, getUser } from './auth';
 import { Modal } from './ui/modal';
 
-import { calculateSemesterStats, calculateSubjectAttendance } from './features/stats';
+import { calculateSemesterStats, getHours, getSubjectMetrics, renderAbsenceDropdown, resetStatsCache } from './features/stats';
 import { renderAbout } from './features/about';
 
 const app = $<HTMLDivElement>('#app');
 
-// --- Initialization ---
-
 async function init() {
     // Show Loading
     app.innerHTML = '<div style="height:100vh; display:grid; place-items:center;">Loading CampusCare...</div>';
+
+    let needsInitialRender = true;
 
     try {
         const isAuth = await initAuth0();
         if (isAuth) {
             const authUser = getUser();
             if (authUser) {
-                store.handleAuth0Login(authUser);
+                app.classList.add('is-loading-data');
+                needsInitialRender = false;
+                await store.handleAuth0Login(authUser);
+                app.classList.remove('is-loading-data');
+                render();
             }
         }
     } catch (e) {
         console.error(e);
+        app.classList.remove('is-loading-data');
     }
 
-    render();
+    if (needsInitialRender) render();
 }
 
 // --- Views & Rendering ---
@@ -411,7 +416,7 @@ function showDeleteAccountModal() {
         const successModal = document.createElement('div');
         successModal.style.cssText = modal.style.cssText;
         successModal.innerHTML = `
-            <div style="background: white; border-radius: 16px; padding: 3rem; text-align: center; max-width: 400px;">
+            <div style="background: white; border-radius: 12px; padding: 20px; text-align: center; max-width: 400px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
                 <div style="font-size: 3rem; margin-bottom: 1rem;">✓</div>
                 <h3 style="margin: 0 0 0.5rem; color: #1e293b;">Account Deleted</h3>
                 <p style="margin: 0; color: #64748b;">Redirecting...</p>
@@ -457,14 +462,23 @@ function renderSection(section: string) {
 
 // --- Features ---
 
+let isDashboardRendering = false;
+
 function renderDashboard(container: HTMLElement) {
+    if (isDashboardRendering) return;
+    isDashboardRendering = true;
+    resetStatsCache();
+    try {
     const data = store.getData();
     const user = store.getCurrentUser();
-    if (!data || !user) return;
+    if (!data || !user) { isDashboardRendering = false; return; }
+
+    const isLoading = document.getElementById('app')?.classList.contains('is-loading-data');
 
     // --- High Priority Logic ---
     const highPrioritySubs = data.subjects.filter(s => s.priority === 'high');
-    const minAtt = data.semesterConfig.minAttendance || 75;
+    const minAtt = data.semesterConfig.minAttendance;
+
 
     container.innerHTML = `
         <header class="flex-between" style="margin-bottom:2rem;">
@@ -474,7 +488,6 @@ function renderDashboard(container: HTMLElement) {
             </div>
             <div style="display:flex; gap:1rem; align-items:center;">
                 
-                <!-- Dashboard Semester Selector -->
                 <!-- Dashboard Semester Selector -->
                  <div class="semester-selector-container">
                     <button id="dash-sem-btn" class="btn btn-secondary" style="font-weight:600; padding:0.5rem 1rem; gap:8px; min-width: 160px; justify-content: space-between;">
@@ -505,11 +518,16 @@ function renderDashboard(container: HTMLElement) {
         </header>
 
         <!-- Top Widgets Row -->
-        <div style="display:grid; grid-template-columns: 1fr; gap:1.5rem; margin-bottom:2rem;">
+        <div style="display:grid; grid-template-columns: 1fr; gap:16px; margin-bottom:24px;">
             <!-- Academic Analytics -->
-            <div class="card" style="padding:1.5rem; border:1px solid #e2e8f0;">
+            <div class="card" style="padding:20px;">
                 <h3 style="margin-bottom:1rem;">Weekly Workload</h3>
-                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem; text-align:center;">
+                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px; text-align:center;">
+                    ${isLoading ? `
+                        <div><div class="sk-title" style="margin:0 auto 8px; width:60%;"></div><div class="sk-line w-50" style="margin:0 auto;"></div></div>
+                        <div><div class="sk-title" style="margin:0 auto 8px; width:60%;"></div><div class="sk-line w-50" style="margin:0 auto;"></div></div>
+                        <div><div class="sk-title" style="margin:0 auto 8px; width:60%;"></div><div class="sk-line w-50" style="margin:0 auto;"></div></div>
+                    ` : `
                     <div>
                         <div style="font-size:1.5rem; font-weight:700; color:var(--color-primary);">
                            ${data.subjects.reduce((acc: any, s: any) => acc + (s.breakdown.theory || 0) * 1 + (s.breakdown.tutorial || 0) * 1 + (s.breakdown.lab || 0) * 2, 0)}
@@ -528,26 +546,27 @@ function renderDashboard(container: HTMLElement) {
                         </div>
                         <div style="font-size:0.75rem; color:#64748b;">Subjects</div>
                     </div>
+                    `}
                 </div>
             </div>
         </div>
 
         <!-- Priority Focus Area -->
         ${highPrioritySubs.length > 0 ? `
-            <div class="card" style="border-left:4px solid #ef4444; padding:1.5rem; margin-bottom:2rem; background:#fff1f2;">
+            <div class="card" style="border-left:4px solid #ef4444; padding:20px; margin-bottom:24px; background:#fff1f2;">
                 <h3 style="color:#b91c1c; margin-bottom:1rem; display:flex; align-items:center; gap:8px;">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                     High Priority Focus
                 </h3>
-                <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap:1rem;">
+                <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap:16px; align-items:stretch;">
                    ${highPrioritySubs.map(s => {
-                const stats = calculateSubjectAttendance(s.id, data);
-                const isRisk = stats.percentage < minAtt;
+                const m = getSubjectMetrics(s, data);
+                const isRisk = m.riskLevel === 'Danger';
 
                 return `
-                       <div style="background:white; padding:1rem; border-radius:8px; border:1px solid ${isRisk ? '#fecaca' : '#e2e8f0'}; box-shadow:sm;">
+                       <div style="background:white; padding:20px; border-radius:12px; border:1px solid ${isRisk ? '#fecaca' : '#e5e7eb'}; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
                            <div style="font-weight:600; color:#1e293b; margin-bottom:5px;">${s.name}</div>
-                           <div style="font-size:0.85rem; color:#64748b; margin-bottom:8px;">Attendance: <span style="font-weight:700; color:${isRisk ? '#dc2626' : '#16a34a'}">${stats.percentage}%</span></div>
+                           <div style="font-size:0.85rem; color:#64748b; margin-bottom:8px;">Attendance: <span style="font-weight:700; color:${isRisk ? '#dc2626' : '#16a34a'}">${m.currentPercent.toFixed(1)}%</span></div>
                            <div style="font-size:0.75rem; color:#94a3b8;">Target: ${minAtt}%</div>
                        </div>
                    `;
@@ -556,39 +575,11 @@ function renderDashboard(container: HTMLElement) {
             </div>
         ` : ''}
 
-        <!-- Timeline Widget -->
-        ${(() => {
-            const stats = calculateSemesterStats(data);
-            if (stats.totalDays === 0) return ''; // No valid config
 
-            return `
-            <div class="card" style="margin-bottom:2rem; padding:1.5rem;">
-                <div class="flex-between" style="margin-bottom:10px;">
-                    <h3 style="font-size:1rem; color:#334155;">Semester Progress</h3>
-                    <span style="font-weight:700; color:var(--color-primary);">${stats.progressPercentage}%</span>
-                </div>
-                <div style="height:8px; background:#e2e8f0; border-radius:4px; overflow:hidden;">
-                    <div style="height:100%; width:${stats.progressPercentage}%; background:var(--color-primary); border-radius:4px;"></div>
-                </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem; margin-top:1rem; text-align:center;">
-                    <div style="background:#f8fafc; padding:8px; border-radius:6px;">
-                        <div style="font-size:0.75rem; color:#64748b;">Days Left</div>
-                        <div style="font-weight:600; color:#1e293b;">${stats.daysLeft}</div>
-                    </div>
-                    <div style="background:#f8fafc; padding:8px; border-radius:6px;">
-                        <div style="font-size:0.75rem; color:#64748b;">Classes Conducted</div>
-                        <div style="font-weight:600; color:#1e293b;">${stats.classesConducted}</div>
-                    </div>
-                     <div style="background:#f8fafc; padding:8px; border-radius:6px;">
-                        <div style="font-size:0.75rem; color:#64748b;">Classes Remaining</div>
-                        <div style="font-weight:600; color:#1e293b;">${stats.classesRemaining}</div>
-                    </div>
-                </div>
-            </div>`;
-        })()}
 
         <!-- Bottom Row (Analysis) -->
-        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap:1.5rem;">
+        <style>@media (max-width: 800px) { .row-a-grid { grid-template-columns: 1fr !important; } }</style>
+        <div class="row-a-grid" style="display:grid; grid-template-columns: 2fr 3fr; gap:16px; align-items:stretch; margin-bottom:16px;">
             
             <!-- Absence Insights -->
             ${(() => {
@@ -606,7 +597,7 @@ function renderDashboard(container: HTMLElement) {
                         // Weight Calculation
                         const dayName = new Date(dStr).toLocaleDateString('en-US', { weekday: 'long' });
                         const dayTT = data.timetable[dayName] || [];
-                        const cls = dayTT.find(c => c.subjectId === parseInt(subId));
+                        const cls = dayTT.find(c => c.subjectId === parseInt(subId) || String(c.subjectId) === subId || c.id === subId);
                         const weight = (cls?.type === 'Lab') ? 2 : 1;
                         totalAbsentWeighted += weight;
                     }
@@ -662,7 +653,7 @@ function renderDashboard(container: HTMLElement) {
             });
 
             return `
-                <div class="card" style="padding:1.5rem; border:1px solid #e2e8f0; border-left: 4px solid #6366f1;">
+                <div class="card" style="padding:20px; border-left: 4px solid #6366f1;">
                     <h3 style="margin-bottom:1.5rem; color:#1e293b;">Absence Insights</h3>
                     <div style="display:flex; gap:2rem; align-items:flex-start;">
                         <div style="flex:1;">
@@ -708,61 +699,230 @@ function renderDashboard(container: HTMLElement) {
                 </div>`;
         })()}
             
-            <!-- Attendance Overview -->
-            <div class="card" style="min-height:300px; padding:1.5rem; border:1px solid #e2e8f0;">
-                <h3 style="margin-bottom:0.5rem;">Attendance Overview</h3>
-                <p style="margin-bottom:1.5rem;">Subject-wise breakdown (Sorted by Priority)</p>
-                
-                <div style="display:flex; flex-direction:column; gap:10px;">
-                    ${data.subjects.length > 0 ? data.subjects
-            .sort((a, b) => {
-                // Determine criticality: High Prio > Low Att vs Target
-                const getScore = (s: any) => {
-                    let sc = 0;
-                    if (s.priority === 'high') sc += 1000;
-                    if (s.priority === 'medium') sc += 500;
-                    // TODO: Add attendance factor if needed, for new just priority
-                    return sc;
-                };
-                return getScore(b) - getScore(a);
-            })
-            .map(s => {
-                const stats = calculateSubjectAttendance(s.id, data);
-                const subPresent = stats.attended;
-                const subTotal = stats.conducted;
-                const per = stats.percentage;
-                const remaining = s.totalClasses - subTotal;
-                const safeRemaining = remaining > 0 ? remaining : 0;
-                const minAtt = user.semesters[user.currentSemesterId].semesterConfig.minAttendance || 75;
-                const isLow = per < minAtt;
+            <!-- Semester Progress Bar -->
+            ${(() => {
+            const semConfig = user.semesters[user.currentSemesterId].semesterConfig;
+            const sDate = new Date(semConfig.startDate);
+            const eDate = new Date(semConfig.endDate);
+            const today = new Date();
 
-                return `
-                        <div style="padding:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
-                            <div class="flex-between" style="margin-bottom:4px;">
-                                <span style="font-weight:600; color:#334155;">
-                                    ${s.name}
-                                    ${s.priority === 'high' ? '🔥' : ''}
-                                </span>
-                                <span style="font-weight:700; color:${isLow ? '#ef4444' : '#10b981'};">${per}%</span>
+            const totalDays = Math.max(1, (eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24));
+            let completedDays = (today.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24);
+            if (completedDays < 0) completedDays = 0;
+            if (completedDays > totalDays) completedDays = totalDays;
+
+            const progressPercent = (completedDays / totalDays) * 100;
+            const weeksRemaining = Math.max(0, Math.floor((eDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24 * 7)));
+            const weeksCompleted = Math.max(0, Math.floor(completedDays / 7));
+
+            let totalExpectedHours = 0;
+            let completedHours = 0;
+
+            data.subjects.forEach((s: any) => {
+                totalExpectedHours += s.totalClasses || 0;
+
+                const m = getSubjectMetrics(s, data);
+                completedHours += m.presentHours;
+            });
+
+            const timeStatusText = today > eDate
+                ? '🎓 Semester Completed!'
+                : `${weeksCompleted} weeks completed · ${weeksRemaining} weeks remaining`;
+
+            const hoursPercent = totalExpectedHours > 0 ? Math.min(100, (completedHours / totalExpectedHours) * 100) : 0;
+
+            return `
+                <div class="card" style="padding:20px; height: 100%; display: flex; flex-direction: column; justify-content: center;">
+                    <h3 style="margin-bottom:1.5rem; font-size:1.1rem; color:#1e293b;">📅 Semester Progress</h3>
+                    
+                    <div style="margin-bottom:1.25rem;">
+                        <div style="font-size:0.9rem; font-weight:600; color:#374151; margin-bottom:0.5rem;">Semester Timeline</div>
+                        <div style="width:100%; height:10px; background:#e5e7eb; border-radius:5px; overflow:hidden;">
+                            <div style="height:100%; width:${progressPercent.toFixed(1)}%; background:#2563eb; border-radius:5px;"></div>
+                        </div>
+                        <div style="font-size:0.8rem; color:#6b7280; margin-top:0.3rem;">
+                            ${timeStatusText}
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <div style="font-size:0.9rem; font-weight:600; color:#374151; margin-bottom:0.5rem;">Hours Completed</div>
+                        <div style="width:100%; height:10px; background:#e5e7eb; border-radius:5px; overflow:hidden;">
+                            <div style="height:100%; width:${hoursPercent.toFixed(1)}%; background:#7c3aed; border-radius:5px;"></div>
+                        </div>
+                        <div style="font-size:0.8rem; color:#6b7280; margin-top:0.3rem;">
+                            ${completedHours.toFixed(1)} hrs completed · ${Math.round(totalExpectedHours)} hrs total expected
+                        </div>
+                    </div>
+                </div>
+                `;
+        })()}
+
+        </div> <!-- END OF ROW A -->
+
+        <!-- ROW B - Attendance Overview -->
+        <div style="width:100%; padding-bottom:32px;">
+            <h3 style="margin-bottom:0.5rem; width:100%;">Attendance Overview</h3>
+            <p style="margin-bottom:1.5rem; width:100%;">Subject-wise breakdown (Sorted by Priority)</p>
+            
+            <div style="width:100%;">
+                ${(() => {
+            if (!data.subjects || data.subjects.length === 0) {
+                return '<p style="color:#94a3b8;">No attendance data yet.</p>';
+            }
+
+            let safeCount = 0;
+            let atRiskCount = 0;
+            let dangerCount = 0;
+
+            const subjectCardsData = data.subjects.map(s => {
+                const m = getSubjectMetrics(s, data);
+
+                return {
+                    subject: s,
+                    metrics: m
+                }
+            });
+
+            // Sort by currentPercent ascending (lowest % = most urgent first)
+            const subjectCardsHtml = isLoading ? `
+                <div class="card skeleton" style="height:120px; border:1px solid #e2e8f0;"></div>
+                <div class="card skeleton" style="height:120px; border:1px solid #e2e8f0;"></div>
+                <div class="card skeleton" style="height:120px; border:1px solid #e2e8f0;"></div>
+            ` : subjectCardsData
+                .sort((a, b) => a.metrics.currentPercent - b.metrics.currentPercent)
+                .map(item => {
+                    const { subject: s, metrics: m } = item;
+
+                    let badgeText = '';
+                    let badgeBg = '';
+                    let badgeColor = '';
+                    let colorHex = '';
+
+                    if (m.riskLevel === 'Safe') {
+                        badgeText = 'Safe';
+                        badgeBg = '#dcfce7';
+                        badgeColor = '#16a34a';
+                        colorHex = '#16a34a';
+                        safeCount++;
+                    } else if (m.riskLevel === 'At Risk') {
+                        badgeText = 'At Risk';
+                        badgeBg = '#fef9c3';
+                        badgeColor = '#ca8a04';
+                        colorHex = '#ca8a04';
+                        atRiskCount++;
+                    } else {
+                        badgeText = 'Danger';
+                        badgeBg = '#fee2e2';
+                        badgeColor = '#dc2626';
+                        colorHex = '#dc2626';
+                        dangerCount++;
+                    }
+
+                    const riskBadge = `<span style="background:${badgeBg}; color:${badgeColor}; font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:20px; display:inline-block; border:1px solid ${badgeColor}33;">${badgeText}</span>`;
+
+                    // LINE 1 — Present hrs info
+                    const line1Html = `<div style="font-size:0.8rem; color:#6b7280; font-weight:500;">Present: ${m.presentHours} hrs / ${m.hoursHeldSoFar} hrs held (${m.currentPercent.toFixed(1)}%)</div>`;
+
+                    // LINE 2 — Semester target status (single smart line)
+                    let line2Html = '';
+                    if (m.bufferHours <= 0) {
+                        line2Html = `<div style="font-size:0.8rem; color:#16a34a; font-weight:500;">✅ Semester target secured!</div>`;
+                    } else if (m.bufferHours <= m.remainingHours) {
+                        // Color based on risk badge: Safe=green, At Risk=orange, Danger=red
+                        const needColor = m.riskLevel === 'Safe' ? '#16a34a' : m.riskLevel === 'At Risk' ? '#f97316' : '#dc2626';
+                        line2Html = `<div style="font-size:0.8rem; color:${needColor}; font-weight:500;">📚 Need ${Math.ceil(m.bufferHours)} more hrs · ${Math.ceil(m.remainingHours)} hrs left in semester</div>`;
+                    } else {
+                        line2Html = `<div style="font-size:0.8rem; color:#dc2626; font-weight:500;">🔴 Need ${Math.ceil(m.bufferHours)} hrs but only ${Math.ceil(m.remainingHours)} hrs left</div>`;
+                    }
+
+                    // LINE 3 — Semester summary
+                    const line3Html = `<div style="font-size:0.78rem; color:#6b7280;">📅 ${m.presentHours} hrs present · ${m.hoursHeldSoFar} hrs held · ${m.totalHours} hrs total</div>`;
+
+                    return `
+                        <div style="background:white; border:1px solid #e5e7eb; border-radius:12px; padding:16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); display:grid; grid-template-columns: 72px 1fr; gap:16px; align-items:center;">
+                            
+                            <!-- Left: Donut Chart -->
+                            <div style="width:72px; height:72px; min-width:72px; min-height:72px; flex-shrink:0; flex-grow:0; border-radius:50%; position:relative; display:flex; align-items:center; justify-content:center; background: conic-gradient(${colorHex} calc(${m.currentPercent}% * 1), #e5e7eb calc(${m.currentPercent}% * 1));">
+                                <div style="width:54px; height:54px; background:white; border-radius:50%; position:absolute; z-index:1;"></div>
+                                <div style="position:relative; z-index:2; font-weight:bold; font-size:0.95rem; color:${colorHex};">
+                                    ${m.currentPercent.toFixed(0)}%
+                                </div>
                             </div>
-                            <div class="flex-between" style="font-size:0.8rem; color:#64748b;">
-                                <span>Attended: ${subPresent}/${subTotal}</span>
-                                <span>Left: <strong>${safeRemaining}</strong></span>
+                            
+                            <!-- Right: Stats -->
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                    <span style="font-weight:bold; font-size:1rem; color:#1f2937; white-space:normal; overflow:visible;">${s.name} ${s.priority === 'high' ? '🔥' : ''}</span>
+                                    <span style="background:#eff6ff; color:#2563eb; font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:20px; border:1px solid #bfdbfe; white-space:nowrap;">${s.credits} Credits</span>
+                                    ${riskBadge}
+                                </div>
+
+                                ${line1Html}
+                                
+                                <div style="border-top:1px solid #f3f4f6; padding-top:6px; margin-top:4px;">
+                                    <div style="margin-bottom:4px;">${line2Html}</div>
+                                    <div>${line3Html}</div>
+                                </div>
                             </div>
-                            <div style="height:4px; background:#e2e8f0; border-radius:2px; margin-top:6px; overflow:hidden;">
-                                <div style="height:100%; width:${per}%; background:${isLow ? '#ef4444' : '#10b981'}; border-radius:2px;"></div>
+                            
+                            <!-- Progress Bar -->
+                            <div style="grid-column: 1 / -1; width:100%; height:6px; background:#e5e7eb; border-radius:6px; overflow: hidden; margin-top:4px;">
+                                <div style="height:100%; width:${m.currentPercent}%; background:${colorHex}; border-radius:6px; transition: width 0.5s ease;"></div>
+                            </div>
+                            
+                            <!-- Absence Dropdown -->
+                            <div style="grid-column: 1 / -1; width:100%;">
+                                ${renderAbsenceDropdown(s)}
                             </div>
                         </div>
                     `;
-            }).join('') : '<p style="color:#94a3b8;">No attendance data yet.</p>'
-        }
+                }).join('');
+
+            let summaryMessage = '';
+            if (dangerCount > 0) summaryMessage = `⚠️ Act now — ${dangerCount} subject${dangerCount > 1 ? 's' : ''} need immediate attention`;
+            else if (atRiskCount > 0) summaryMessage = `📊 You're close on ${atRiskCount} subject${atRiskCount > 1 ? 's' : ''} — attend consistently`;
+            else summaryMessage = `✅ You're on track across all subjects!`;
+
+            const summaryBarHtml = `
+                <style>
+                    .summary-bar-flex {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                    }
+                    @media (max-width: 640px) {
+                        .summary-bar-flex {
+                            flex-direction: column;
+                            gap: 12px;
+                            justify-content: center;
+                        }
+                    }
+                </style>
+                <div class="summary-bar-flex" style="background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); width: 100%;">
+                    <div style="font-weight:500; font-size:1rem; display:flex; gap:16px;">
+                         <span style="color:#16a34a;">🟢 ${safeCount} Safe</span>
+                         <span style="color:#ca8a04;">🟡 ${atRiskCount} At Risk</span>
+                         <span style="color:#dc2626;">🔴 ${dangerCount} Danger</span>
+                    </div>
+                    <div style="text-align:center; font-size:0.9rem; color:#4b5563; font-weight:500;">
+                        ${summaryMessage}
+                    </div>
                 </div>
-                </div>
-                </div>
-                    `;
+            `;
+
+            return summaryBarHtml + `<div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap:16px; width:100%; align-items:start;">` + subjectCardsHtml + `</div>`;
+        })()}
+            </div>
+        </div>
+    </div>
+    `;
 
     // Attach Dashboard Handlers
     setTimeout(() => {
+        const user = store.getCurrentUser();
+        const currentSemester = user?.semesters?.[user.currentSemesterId];
+
         const dBtn = document.getElementById('dash-sem-btn');
         const dDrop = document.getElementById('dash-sem-dropdown');
 
@@ -782,22 +942,321 @@ function renderDashboard(container: HTMLElement) {
                 opt.addEventListener('click', async (e) => {
                     const val = (e.currentTarget as HTMLElement).dataset.val;
                     if (val === 'new') {
-                        const nextSem = Math.max(...Object.keys(user.semesters).map(Number)) + 1;
-                        const confirmed = await Modal.confirm(`Start Semester ${nextSem} ? `);
+                        const nextSem = Math.max(...Object.keys(user!.semesters).map(Number)) + 1;
+                        const confirmed = await Modal.confirm(`Start Semester ${nextSem}?`);
                         if (confirmed) {
                             store.addSemester(nextSem);
-                            render();
+                            renderSection('dashboard');
                         }
                     } else if (val) {
                         store.switchSemester(parseInt(val));
-                        render();
+                        renderSection('dashboard');
                     }
                 });
             });
         }
-    }, 0);
+
+        // --- Absence Dropdown Bindings (Direct Onclick) ---
+        const timetableData = currentSemester?.timetable ?? [];
+        const ttSlots = Array.isArray(timetableData)
+            ? timetableData
+            : Object.values(timetableData).flat() as any[];
+
+        data.subjects?.forEach((subject: any) => {
+            const btn = document.getElementById(`absence-btn-${subject.id}`);
+            const dropdown = document.getElementById(`absence-drop-${subject.id}`);
+            if (!btn || !dropdown) return;
+
+            btn.onclick = () => {
+                const isOpen = dropdown.style.maxHeight !== '0px' && dropdown.style.maxHeight !== '';
+
+                // Close all dropdowns
+                data.subjects?.forEach((s: any) => {
+                    const d = document.getElementById(`absence-drop-${s.id}`);
+                    const b = document.getElementById(`absence-btn-${s.id}`);
+                    if (d) { d.style.maxHeight = '0px'; d.style.overflowY = 'hidden'; }
+                    if (b) b.textContent = '▼ View Absence History';
+                });
+
+                if (!isOpen) {
+                    // Build absences for this subject using direct key matching
+                    const attendanceData = currentSemester?.attendance ?? {};
+                    const timetableByDay = currentSemester?.timetable ?? {};
+                    const subjectSlots = ttSlots.filter(
+                        (slot: any) => slot.subjectName === subject.name || String(slot.subjectId) === String(subject.id)
+                    );
+
+                    // Build a set of all slot IDs for this subject
+                    const slotIds = new Set(subjectSlots.map((s: any) => s.id));
+
+                    // Build a set of day names where this subject has classes (from timetable keyed by day)
+                    const subjectDayNames = new Set<string>();
+                    for (const [dayName, slots] of Object.entries(timetableByDay)) {
+                        if (!Array.isArray(slots)) continue;
+                        for (const slot of slots) {
+                            if (slot.subjectName === subject.name || String(slot.subjectId) === String(subject.id)) {
+                                subjectDayNames.add(dayName);
+                            }
+                        }
+                    }
+
+                    const absences: any[] = [];
+
+                    // Loop every recorded date — strict priority: slotId first, old key only as fallback
+                    for (const [date, dayData] of Object.entries(attendanceData)) {
+                        let foundViaSlot = false;
+
+                        // FIRST PASS — match by slotId only
+                        for (const [key, status] of Object.entries(dayData as any)) {
+                            if (!slotIds.has(key)) continue;
+                            if (status !== 'absent') continue;
+
+                            foundViaSlot = true;
+                            const matchingSlot = subjectSlots.find((s: any) => s.id === key);
+                            const reason = currentSemester?.attendanceReasons?.[date]?.[key] ?? null;
+
+                            absences.push({
+                                date,
+                                slotId: key,
+                                time: matchingSlot
+                                    ? matchingSlot.startTime + '–' + matchingSlot.endTime
+                                    : 'Unknown time',
+                                classType: matchingSlot?.type ?? matchingSlot?.classType ?? 'Class',
+                                reason
+                            });
+                        }
+
+                        // SECOND PASS — old numeric key ONLY if no slot match found for this date
+                        if (!foundViaSlot) {
+                            const oldStatus = (dayData as any)[subject.id] ?? (dayData as any)[String(subject.id)];
+
+                            if (oldStatus === 'absent') {
+                                // Verify subject actually has class on this day
+                                const dateObj = new Date(date);
+                                const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+                                if (subjectDayNames.has(dayName)) {
+                                    const slot = subjectSlots[0];
+                                    const reason = currentSemester?.attendanceReasons?.[date]?.[subject.id]
+                                        ?? currentSemester?.attendanceReasons?.[date]?.[String(subject.id)]
+                                        ?? null;
+
+                                    absences.push({
+                                        date,
+                                        slotId: String(subject.id),
+                                        time: slot
+                                            ? slot.startTime + '–' + slot.endTime
+                                            : 'Unknown time',
+                                        classType: slot?.type ?? slot?.classType ?? 'Class',
+                                        reason
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    // Also check extra classes properly
+                    if (currentSemester?.extraClasses) {
+                        for (const [date, extraList] of Object.entries(currentSemester?.extraClasses || {}) as any) {
+                            for (const exc of (extraList as any[])) {
+                                if ((exc.subjectName === subject.name || String(exc.subjectId) === String(subject.id)) && exc.status === 'absent') {
+                                    absences.push({
+                                        date,
+                                        slotId: exc.id || ('extra_' + date + '_' + exc.subjectId),
+                                        time: 'Extra Class',
+                                        classType: exc.type,
+                                        reason: exc.absenceReason || currentSemester?.attendanceReasons?.[date]?.[subject.id] || null
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    // Remove duplicate entries for same date+slotId
+                    const seen = new Set<string>();
+                    const uniqueAbsences = absences.filter(a => {
+                        const k = a.date + '-' + a.slotId;
+                        if (seen.has(k)) return false;
+                        seen.add(k);
+                        return true;
+                    });
+
+                    uniqueAbsences.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                    console.log('Raw absences before dedup:', JSON.stringify(absences));
+                    console.log('Unique absences after dedup:', JSON.stringify(uniqueAbsences));
+                    console.log('SlotIds set:', [...slotIds]);
+                    console.log('Absences for', subject.name, ':', uniqueAbsences.length);
+
+                    const totalHours = uniqueAbsences.reduce(
+                        (sum, a) => sum + (a.classType?.toLowerCase() === 'lab' ? 2 : 1), 0
+                    );
+
+                    dropdown.innerHTML = uniqueAbsences.length === 0
+                        ? `<div style="text-align:center; color:#16a34a; font-size:0.82rem; padding:12px;">✅ No absences recorded</div>`
+                        : `<div style="font-size:0.8rem; color:#6b7280; margin-bottom:10px; padding-top:12px;">
+                            ${uniqueAbsences.length} absence(s) · ${totalHours} hrs missed
+                           </div>
+                           ${uniqueAbsences.map(a => {
+                            const formatted = new Date(a.date).toLocaleDateString('en-IN', {
+                                weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+                            });
+                            return '<div style="display:flex; justify-content:space-between; align-items:center; padding:8px; background:white; border-radius:6px; border:1px solid #fee2e2; margin-bottom:6px;">'
+                                + '<div>'
+                                + '<div style="font-size:0.8rem; font-weight:500;color:#374151;">' + formatted + '</div>'
+                                + '<div style="font-size:0.72rem; color:#9ca3af;">' + a.time + ' · ' + a.classType + '</div>'
+                                + '</div>'
+                                + '<div style="font-size:0.72rem; padding:2px 8px; border-radius:20px; background:#fff7ed; color:#92400e; border:1px solid #fed7aa;">'
+                                + (a.reason ?? 'No reason')
+                                + '</div>'
+                                + '</div>';
+                           }).join('')}
+                           <div style="padding-bottom:8px"></div>`;
+
+                            dropdown.style.maxHeight = '400px';
+                            dropdown.style.overflowY = 'auto';
+                            (dropdown.style as any).scrollbarWidth = 'thin';
+                            (dropdown.style as any).scrollbarColor = '#e5e7eb transparent';
+                            btn.textContent = '▲ Hide Absence History';
+                        }
+            };
+        });
+
+        // --- Heatmap Tooltip Bindings ---
+        const heatCells = document.querySelectorAll('.heat-cell');
+        let tooltip = document.getElementById('cal-tooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'cal-tooltip';
+            tooltip.style.position = 'fixed';
+            tooltip.style.zIndex = '9999';
+            tooltip.style.background = '#1e293b';
+            tooltip.style.color = 'white';
+            tooltip.style.borderRadius = '8px';
+            tooltip.style.padding = '10px 14px';
+            tooltip.style.fontSize = '0.8rem';
+            tooltip.style.minWidth = '160px';
+            tooltip.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
+            tooltip.style.pointerEvents = 'none';
+            tooltip.style.display = 'none';
+            document.body.appendChild(tooltip);
+        }
+
+        heatCells.forEach(cell => {
+            const dStr = (cell as HTMLElement).dataset.date;
+            if (!dStr) return;
+
+            cell.addEventListener('mouseenter', () => {
+                const checkDateObj = new Date(dStr);
+                const dayName = checkDateObj.toLocaleDateString('en-US', { weekday: 'long' });
+
+                const dayClasses = data.timetable[dayName] || [];
+                const dayClassNames = dayClasses.map((entry: any) => entry.subjectName);
+                const exClasses = Array.isArray(data.extraClasses?.[dStr]) ? data.extraClasses[dStr] : [];
+                const extraClassNames = exClasses.map((ev: any) => ev.subjectName || data.subjects.find((s: any) => String(s.id) === String(ev.subjectId))?.name).filter(Boolean);
+
+                const uniqueSubjectNamesToday = Array.from(new Set([...dayClassNames, ...extraClassNames]));
+
+                let tooltipHTML = `< div style = "font-weight:bold; margin-bottom:8px; border-bottom:1px solid #475569; padding-bottom:4px;" > ${ checkDateObj.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }) } </div>`;
+
+                    if (uniqueSubjectNamesToday.length === 0) {
+                        tooltipHTML += `<div style="color:#94a3b8; font-style:italic;">No classes scheduled</div>`;
+                    } else {
+                        let totalHrsDayObj = 0;
+                        let presentHrsDayObj = 0;
+
+                        uniqueSubjectNamesToday.forEach((subjectName: string) => {
+                            const subj = data.subjects.find((s: any) => s.name === subjectName);
+                            if (subj) {
+                                const attDay = data.attendance[dStr] || {};
+
+                                // Check if standard schedule exists for weight
+                                const standardMatch = dayClasses.find((c: any) => c.subjectName === subjectName);
+                                // Look for explicit extra class status
+                                const exStatusMatch = exClasses.find((ev: any) => ev.subjectName === subjectName || (data.subjects.find((s2: any) => String(s2.id) === String(ev.subjectId))?.name === subjectName));
+
+                                let hrs = 1;
+                                if (exStatusMatch) {
+                                    hrs = getHours(exStatusMatch.type);
+                                } else if (standardMatch) {
+                                    hrs = getHours(standardMatch.type);
+                                }
+
+                                let status = exStatusMatch ? exStatusMatch.status : (standardMatch?.id ? attDay[standardMatch.id] : (attDay[subj.id] ?? attDay[String(subj.id)] ?? null));
+
+                                // Increment counters safely dodging Cancelled/Excused if evaluating
+                                if (status !== 'class_cancelled' && status !== 'excused') {
+                                    totalHrsDayObj += hrs;
+                                    if (status === 'present') presentHrsDayObj += hrs;
+                                    if (status === 'present_half') presentHrsDayObj += 0.5 * hrs;
+                                }
+
+                                let statusIcon = "—";
+                                let statusText = "Not marked";
+                                let sColor = "#94a3b8";
+
+                                if (status === 'present') { statusIcon = "✅"; statusText = "Present"; sColor = "#10b981"; }
+                                else if (status === 'absent') { statusIcon = "❌"; statusText = "Absent"; sColor = "#ef4444"; }
+                                else if (status === 'present_half') { statusIcon = "🌓"; statusText = "Half"; sColor = "#f59e0b"; }
+                                else if (status === 'class_cancelled') { statusIcon = "🚫"; statusText = "Cancelled"; sColor = "#cbd5e1"; }
+                                else if (status === 'excused') { statusIcon = "📝"; statusText = "Excused"; sColor = "#60a5fa"; }
+
+                                tooltipHTML += `<div style="display:flex; justify-content:space-between; margin-bottom:4px; align-items:center;">
+                                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:120px; color:#e2e8f0;">${subj.name}</span>
+                                <span style="color:${sColor}; margin-left:12px; font-size: 0.75rem;">${statusIcon} ${statusText} <span style="color:#64748b;">(${hrs}h)</span></span>
+                            </div>`;
+                            }
+                        });
+
+                        if (totalHrsDayObj > 0) {
+                            const pCent = Math.round((presentHrsDayObj / totalHrsDayObj) * 100);
+                            tooltipHTML += `<div style="border-top:1px solid #334155; margin-top:6px; padding-top:6px; display:flex; justify-content:space-between; color:#94a3b8; font-weight:500; font-size: 0.75rem;">
+                            <span>Overall:</span>
+                            <span style="${pCent < minAtt ? 'color:#ef4444' : 'color:#10b981'}">${presentHrsDayObj} of ${totalHrsDayObj} hrs attended (${pCent}%)</span>
+                        </div>`;
+                        } else if (uniqueSubjectNamesToday.length > 0) {
+                            tooltipHTML += `<div style="border-top:1px solid #334155; margin-top:6px; padding-top:6px; color:#94a3b8; font-style:italic; font-size: 0.75rem; text-align:center;">
+                            Classes excused / cancelled
+                        </div>`;
+                        }
+                    }
+
+                    if (tooltip) {
+                        tooltip.innerHTML = tooltipHTML;
+                        tooltip.style.display = 'block';
+                    }
+                });
+
+        cell.addEventListener('mousemove', (e: Event) => {
+            const mouseEvent = e as MouseEvent;
+            if (tooltip) {
+                let left = mouseEvent.clientX + 12;
+                let top = mouseEvent.clientY + 12;
+
+                const tooltipRect = tooltip.getBoundingClientRect();
+                if (left + tooltipRect.width > window.innerWidth) {
+                    left = mouseEvent.clientX - tooltipRect.width - 12;
+                }
+                if (top + tooltipRect.height > window.innerHeight) {
+                    top = mouseEvent.clientY - tooltipRect.height - 12;
+                }
+
+                tooltip.style.left = left + 'px';
+                tooltip.style.top = top + 'px';
+            }
+        });
+
+        cell.addEventListener('mouseleave', () => {
+            if (tooltip) {
+                tooltip.style.display = 'none';
+            }
+        });
+    });
+
+}, 0);
+    } finally {
+        isDashboardRendering = false;
+    }
 }
 
 // Start
 init();
-
